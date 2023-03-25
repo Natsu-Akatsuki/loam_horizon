@@ -17,13 +17,18 @@
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>roscpp</depend>
+  <depend>rcutils</depend>
   <depend>rospy</depend>
-  <depend>std_msgs</depend>  
+  <depend>std_msgs</depend>
   <depend>rosbag</depend>
   <depend>sensor_msgs</depend>
+  <depend>pcl_conversions</depend>
+  <depend>visualization_msgs</depend>
   <depend>tf</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
   <depend>image_transport</depend>
-  <depend>livox_ros_driver</depend>
+  <depend>livox_ros_driver2</depend>
 
   <export>
   </export>
