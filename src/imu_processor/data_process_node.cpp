@@ -1,10 +1,10 @@
-#include <ros/ros.h>
+#include <rclcpp/rclcpp.hpp>
 #include <condition_variable>
 #include <csignal>
 #include <deque>
 #include <mutex>
 #include <thread>
-
+#include <std_msgs/msg/string.hpp>
 #include "imu_processor/data_process.h"
 
 /// *************Config data
@@ -20,24 +20,23 @@ bool b_reset = false;
 
 /// Buffers for measurements
 double last_timestamp_lidar = -1;
-std::deque<sensor_msgs::PointCloud2::ConstPtr> lidar_buffer;
+std::deque<sensor_msgs::msg::PointCloud2::ConstSharedPtr> lidar_buffer;
 double last_timestamp_imu = -1;
-std::deque<sensor_msgs::Imu::ConstPtr> imu_buffer;
+std::deque<sensor_msgs::msg::Imu::ConstSharedPtr> imu_buffer;
 
 void SigHandle(int sig) {
   b_exit = true;
-  ROS_WARN("catch sig %d", sig);
+  RCLCPP_WARN(rclcpp::get_logger("data_process"), "catch sig %d", sig);
   sig_buffer.notify_all();
 }
 
-void pointcloud_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg) {
-  const double timestamp = msg->header.stamp.toSec();
-  // ROS_DEBUG("get point cloud at time: %.6f", timestamp);
+void pointcloud_cbk(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &msg) {
+  const double timestamp = rclcpp::Time(msg->header.stamp).seconds();
 
   mtx_buffer.lock();
 
   if (timestamp < last_timestamp_lidar) {
-    ROS_ERROR("lidar loop back, clear buffer");
+    RCLCPP_ERROR(rclcpp::get_logger("data_process"), "lidar loop back, clear buffer");
     lidar_buffer.clear();
   }
   last_timestamp_lidar = timestamp;
@@ -48,16 +47,16 @@ void pointcloud_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg) {
   sig_buffer.notify_all();
 }
 
-void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in) {
-  sensor_msgs::Imu::Ptr msg(new sensor_msgs::Imu(*msg_in));
+void imu_cbk(const sensor_msgs::msg::Imu::ConstSharedPtr &msg_in) {
+  sensor_msgs::msg::Imu::SharedPtr msg(new sensor_msgs::msg::Imu(*msg_in));
 
-  double timestamp = msg->header.stamp.toSec();
+  double timestamp = rclcpp::Time(msg->header.stamp).seconds();
   // ROS_DEBUG("get imu at time: %.6f", timestamp);
 
   mtx_buffer.lock();
 
   if (timestamp < last_timestamp_imu) {
-    ROS_ERROR("imu loop back, clear buffer");
+    RCLCPP_ERROR(rclcpp::get_logger("data_process"), "imu loop back, clear buffer");
     imu_buffer.clear();
     b_reset = true;
   }
@@ -75,28 +74,28 @@ bool SyncMeasure(MeasureGroup &measgroup) {
     return false;
   }
 
-  if (imu_buffer.front()->header.stamp.toSec() >
-      lidar_buffer.back()->header.stamp.toSec()) {
+  if (rclcpp::Time(imu_buffer.front()->header.stamp).seconds() >
+      rclcpp::Time(lidar_buffer.back()->header.stamp).seconds()) {
     lidar_buffer.clear();
-    ROS_ERROR("clear lidar buffer, only happen at the beginning");
+    RCLCPP_ERROR(rclcpp::get_logger("data_process"), "clear lidar buffer, only happen at the beginning");
     return false;
   }
 
-  if (imu_buffer.back()->header.stamp.toSec() <
-      lidar_buffer.front()->header.stamp.toSec()) {
+  if (rclcpp::Time(imu_buffer.back()->header.stamp).seconds() <
+      rclcpp::Time(lidar_buffer.front()->header.stamp).seconds()) {
     return false;
   }
 
   /// Add lidar data, and pop from buffer
   measgroup.lidar = lidar_buffer.front();
   lidar_buffer.pop_front();
-  double lidar_time = measgroup.lidar->header.stamp.toSec();
+  double lidar_time = rclcpp::Time(measgroup.lidar->header.stamp).seconds();
 
   /// Add imu data, and pop from buffer
   measgroup.imu.clear();
   int imu_cnt = 0;
-  for (const auto &imu : imu_buffer) {
-    double imu_time = imu->header.stamp.toSec();
+  for (const auto &imu: imu_buffer) {
+    double imu_time = rclcpp::Time(imu->header.stamp).seconds();
     if (imu_time <= lidar_time) {
       measgroup.imu.push_back(imu);
       imu_cnt++;
@@ -111,10 +110,10 @@ bool SyncMeasure(MeasureGroup &measgroup) {
 }
 
 void ProcessLoop(std::shared_ptr<ImuProcess> p_imu) {
-  ROS_INFO("Start ProcessLoop");
+  RCLCPP_INFO(rclcpp::get_logger("data_process"), "Start ProcessLoop");
 
-  ros::Rate r(1000);
-  while (ros::ok()) {
+  rclcpp::Rate r(1000);
+  while (rclcpp::ok()) {
     MeasureGroup meas;
     std::unique_lock<std::mutex> lk(mtx_buffer);
     sig_buffer.wait(lk,
@@ -122,12 +121,12 @@ void ProcessLoop(std::shared_ptr<ImuProcess> p_imu) {
     lk.unlock();
 
     if (b_exit) {
-      ROS_INFO("b_exit=true, exit");
+      RCLCPP_INFO(rclcpp::get_logger("data_process"), "b_exit=true, exit");
       break;
     }
 
     if (b_reset) {
-      ROS_WARN("reset when rosbag play back");
+      RCLCPP_WARN(rclcpp::get_logger("data_process"), "reset when rosbag play back");
       p_imu->Reset();
       b_reset = false;
       continue;
@@ -139,17 +138,18 @@ void ProcessLoop(std::shared_ptr<ImuProcess> p_imu) {
 }
 
 int main(int argc, char **argv) {
-  ros::init(argc, argv, "data_process");
-  ros::NodeHandle nh;
+  rclcpp::init(argc, argv);
+  auto node = rclcpp::Node::make_shared("data_process");
+
   signal(SIGINT, SigHandle);
+  auto sub_pcl = node->create_subscription<sensor_msgs::msg::PointCloud2::ConstSharedPtr>(topic_pcl, 10,
+                                                                                          pointcloud_cbk);
+  auto sub_imu = node->create_subscription<sensor_msgs::msg::Imu::ConstSharedPtr>(topic_imu, 1000, imu_cbk);
 
-  ros::Subscriber sub_pcl = nh.subscribe(topic_pcl, 100, pointcloud_cbk);
-  ros::Subscriber sub_imu = nh.subscribe(topic_imu, 1000, imu_cbk);
-
-  std::shared_ptr<ImuProcess> p_imu(new ImuProcess());
+  std::shared_ptr<ImuProcess> p_imu(new ImuProcess(node));
 
   std::vector<double> vec;
-  if( nh.getParam("/ExtIL", vec) ){
+  if (node->get_parameter("/ExtIL", vec)) {
     Eigen::Quaternion<double> q_il;
     Eigen::Vector3d t_il;
     q_il.w() = vec[0];
@@ -158,24 +158,19 @@ int main(int argc, char **argv) {
     q_il.z() = vec[3];
     t_il << vec[4], vec[5], vec[6];
     p_imu->set_T_i_l(q_il, t_il);
-    ROS_INFO("Extrinsic Parameter RESET ... ");
+    RCLCPP_INFO(rclcpp::get_logger("data_process"), "Extrinsic Parameter RESET ... ");
   }
-
-  /// for debug
-  p_imu->nh = nh;
 
   std::thread th_proc(ProcessLoop, p_imu);
 
-  // ros::spin();
-  ros::Rate r(1000);
-  while (ros::ok()) {
+  rclcpp::Rate r(1000);
+  while (rclcpp::ok()) {
     if (b_exit) break;
-
-    ros::spinOnce();
+    rclcpp::spin_some(node);
     r.sleep();
   }
 
-  ROS_INFO("Wait for process loop exit");
+  RCLCPP_INFO(rclcpp::get_logger("data_process"), "Wait for process loop exit");
   if (th_proc.joinable()) th_proc.join();
 
   return 0;

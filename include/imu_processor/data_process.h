@@ -3,58 +3,61 @@
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-#include <ros/ros.h>
-#include <sensor_msgs/Imu.h>
-#include <sensor_msgs/PointCloud2.h>
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/imu.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
 #include <fstream>
 #include "gyr_int.h"
 #include "loam_horizon/common.h"
 #include "sophus/se3.hpp"
 
 struct MeasureGroup {
-  sensor_msgs::PointCloud2ConstPtr lidar;
-  std::vector<sensor_msgs::Imu::ConstPtr> imu;
+    sensor_msgs::msg::PointCloud2::ConstSharedPtr lidar;
+    std::vector<sensor_msgs::msg::Imu::ConstPtr> imu;
 };
 
 class ImuProcess {
- public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-  ImuProcess();
-  ~ImuProcess();
+    ImuProcess(rclcpp::Node::SharedPtr node);
 
-  void Process(const MeasureGroup &meas);
-  void Reset();
+    ~ImuProcess();
 
-  void IntegrateGyr(const std::vector<sensor_msgs::Imu::ConstPtr> &v_imu);
+    void Process(const MeasureGroup &meas);
 
-  void UndistortPcl(const PointCloudXYZI::Ptr &pcl_in_out, double dt_be,
-                    const Sophus::SE3d &Tbe);
-  void set_T_i_l(Eigen::Quaterniond& q, Eigen::Vector3d& t){
-    T_i_l = Sophus::SE3d(q, t);
-  }
+    void Reset();
 
-  ros::NodeHandle nh;
+    void IntegrateGyr(const std::vector<sensor_msgs::msg::Imu::ConstPtr> &v_imu);
 
- private:
-  /// Whether is the first frame, init for first frame
-  bool b_first_frame_ = true;
+    void UndistortPcl(const PointCloudXYZI::Ptr &pcl_in_out, double dt_be,
+                      const Sophus::SE3d &Tbe);
 
-  //// Input pointcloud
-  PointCloudXYZI::Ptr cur_pcl_in_;
-  //// Undistorted pointcloud
-  PointCloudXYZI::Ptr cur_pcl_un_;
+    void set_T_i_l(Eigen::Quaterniond &q, Eigen::Vector3d &t) {
+      T_i_l = Sophus::SE3d(q, t);
+    }
 
-  double dt_l_c_;
+    std::shared_ptr<rclcpp::Node> nh_;
 
-  /// Transform form lidar to imu
-  Sophus::SE3d T_i_l;
-  //// For timestamp usage
-  sensor_msgs::PointCloud2ConstPtr last_lidar_;
-  sensor_msgs::ImuConstPtr last_imu_;
+private:
+    /// Whether is the first frame, init for first frame
+    bool b_first_frame_ = true;
 
-  /// For gyroscope integration
-  GyrInt gyr_int_;
+    //// Input pointcloud
+    PointCloudXYZI::Ptr cur_pcl_in_;
+    //// Undistorted pointcloud
+    PointCloudXYZI::Ptr cur_pcl_un_;
+
+    double dt_l_c_;
+
+    /// Transform form lidar to imu
+    Sophus::SE3d T_i_l;
+    //// For timestamp usage
+    sensor_msgs::msg::PointCloud2::ConstSharedPtr last_lidar_;
+    sensor_msgs::msg::Imu::ConstSharedPtr last_imu_;
+
+    /// For gyroscope integration
+    GyrInt gyr_int_;
 };
 
 #endif  // LOAM_HORIZON_DATA_PROCESS_H

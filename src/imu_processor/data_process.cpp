@@ -1,14 +1,13 @@
 #include "imu_processor/data_process.h"
-#include <nav_msgs/Odometry.h>
+#include <nav_msgs/msg/odometry.hpp>
 #include <pcl/common/io.h>
 #include <pcl/common/transforms.h>
 #include <pcl/point_cloud.h>
 #include <pcl_conversions/pcl_conversions.h>
-#include <ros/ros.h>
-#include <sensor_msgs/PointCloud2.h>
-#include <tf/transform_broadcaster.h>
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
 #include <cmath>
-
+#include "rcpputils/asserts.hpp"
 #include <pcl/kdtree/kdtree_flann.h>
 #include <opencv2/opencv.hpp>
 
@@ -16,10 +15,10 @@ using Sophus::SE3d;
 using Sophus::SO3d;
 
 pcl::PointCloud<pcl::PointXYZINormal>::Ptr laserCloudtmp(
-    new pcl::PointCloud<pcl::PointXYZINormal>());
+  new pcl::PointCloud<pcl::PointXYZINormal>());
 
-ImuProcess::ImuProcess()
-    : b_first_frame_(true), last_lidar_(nullptr), last_imu_(nullptr) {
+ImuProcess::ImuProcess(rclcpp::Node::SharedPtr nh)
+  : nh_(nh), b_first_frame_(true), last_lidar_(nullptr), last_imu_(nullptr) {
   Eigen::Quaterniond q(1, 0, 0, 0);
   Eigen::Vector3d t(0, 0, 0);
   T_i_l = Sophus::SE3d(q, t);
@@ -28,7 +27,6 @@ ImuProcess::ImuProcess()
 ImuProcess::~ImuProcess() {}
 
 void ImuProcess::Reset() {
-  ROS_WARN("Reset ImuProcess");
 
   b_first_frame_ = true;
   last_lidar_ = nullptr;
@@ -41,11 +39,11 @@ void ImuProcess::Reset() {
 }
 
 void ImuProcess::IntegrateGyr(
-    const std::vector<sensor_msgs::Imu::ConstPtr> &v_imu) {
+  const std::vector<sensor_msgs::msg::Imu::ConstSharedPtr> &v_imu) {
   /// Reset gyr integrator
-  gyr_int_.Reset(last_lidar_->header.stamp.toSec(), last_imu_);
+  gyr_int_.Reset(rclcpp::Time(last_lidar_->header.stamp).seconds(), last_imu_);
   /// And then integrate all the imu measurements
-  for (const auto &imu : v_imu) {
+  for (const auto &imu: v_imu) {
     gyr_int_.Integrate(imu);
   }
   ROS_INFO("integrate rotation angle [x, y, z]: [%.2f, %.2f, %.2f]",
@@ -58,7 +56,7 @@ void ImuProcess::UndistortPcl(const PointCloudXYZI::Ptr &pcl_in_out,
                               double dt_be, const Sophus::SE3d &Tbe) {
   const Eigen::Vector3d &tbe = Tbe.translation();
   Eigen::Vector3d rso3_be = Tbe.so3().log();
-  for (auto &pt : pcl_in_out->points) {
+  for (auto &pt: pcl_in_out->points) {
     int ring = int(pt.intensity);
     float dt_bi = pt.intensity - ring;
 
@@ -87,12 +85,12 @@ void ImuProcess::UndistortPcl(const PointCloudXYZI::Ptr &pcl_in_out,
 }
 
 void ImuProcess::Process(const MeasureGroup &meas) {
-  ROS_ASSERT(!meas.imu.empty());
-  ROS_ASSERT(meas.lidar != nullptr);
-  ROS_DEBUG("Process lidar at time: %.4f, %lu imu msgs from %.4f to %.4f",
-            meas.lidar->header.stamp.toSec(), meas.imu.size(),
-            meas.imu.front()->header.stamp.toSec(),
-            meas.imu.back()->header.stamp.toSec());
+  rcpputils::assert_true(!meas.imu.empty());
+  rcpputils::assert_true(meas.lidar != nullptr);
+  RCLCPP_DEBUG(rclcpp::get_logger("data_process"), "Process lidar at time: %.4f, %lu imu msgs from %.4f to %.4f",
+               rclcpp::Time(meas.lidar->header.stamp).seconds(), meas.imu.size(),
+               rclcpp::Time(meas.imu.front()->header.stamp).seconds(),
+               rclcpp::Time(meas.imu.back()->header.stamp).seconds());
 
   auto pcl_in_msg = meas.lidar;
 
@@ -106,7 +104,7 @@ void ImuProcess::Process(const MeasureGroup &meas) {
     last_lidar_ = pcl_in_msg;
     last_imu_ = meas.imu.back();
 
-    ROS_WARN("The very first lidar frame");
+    RCLCPP_WARN(rclcpp::get_logger("data_process"), "The very first lidar frame");
 
     /// Do nothing more, return
     b_first_frame_ = false;
@@ -120,7 +118,7 @@ void ImuProcess::Process(const MeasureGroup &meas) {
   //// Initial pose from IMU (with only rotation)
   SE3d T_l_c(gyr_int_.GetRot(), Eigen::Vector3d::Zero());
   dt_l_c_ =
-      pcl_in_msg->header.stamp.toSec() - last_lidar_->header.stamp.toSec();
+    rclcpp::Time(pcl_in_msg->header.stamp).seconds() - rclcpp::Time(last_lidar_->header.stamp).seconds();
   //// Get input pcl
   pcl::fromROSMsg(*pcl_in_msg, *cur_pcl_in_);
 
@@ -131,34 +129,31 @@ void ImuProcess::Process(const MeasureGroup &meas) {
   UndistortPcl(cur_pcl_un_, dt_l_c_, T_l_be);
 
   {
-    static ros::Publisher pub_UndistortPcl =
-        nh.advertise<sensor_msgs::PointCloud2>("/livox_first_point", 100);
-    sensor_msgs::PointCloud2 pcl_out_msg;
+    static auto pub_UndistortPcl = nh_->create_publisher<sensor_msgs::msg::PointCloud2>("/livox_undistort", 100);
+    sensor_msgs::msg::PointCloud2 pcl_out_msg;
     pcl::toROSMsg(*laserCloudtmp, pcl_out_msg);
     pcl_out_msg.header = pcl_in_msg->header;
     pcl_out_msg.header.frame_id = "camera_init";
-    pub_UndistortPcl.publish(pcl_out_msg);
+    pub_UndistortPcl->publish(pcl_out_msg);
     laserCloudtmp->clear();
   }
 
   {
-    static ros::Publisher pub_UndistortPcl =
-        nh.advertise<sensor_msgs::PointCloud2>("/livox_undistort", 100);
-    sensor_msgs::PointCloud2 pcl_out_msg;
+    static auto pub_UndistortPcl = nh_->create_publisher<sensor_msgs::msg::PointCloud2>("/livox_undistort", 100);
+    sensor_msgs::msg::PointCloud2 pcl_out_msg;
     pcl::toROSMsg(*cur_pcl_un_, pcl_out_msg);
     pcl_out_msg.header = pcl_in_msg->header;
     pcl_out_msg.header.frame_id = "camera_init";
-    pub_UndistortPcl.publish(pcl_out_msg);
+    pub_UndistortPcl->publish(pcl_out_msg);
   }
 
   {
-    static ros::Publisher pub_UndistortPcl =
-        nh.advertise<sensor_msgs::PointCloud2>("/livox_distort", 100);
-    sensor_msgs::PointCloud2 pcl_out_msg;
+    static auto pub_UndistortPcl = nh_->create_publisher<sensor_msgs::msg::PointCloud2>("/livox_undistort", 100);
+    sensor_msgs::msg::PointCloud2 pcl_out_msg;
     pcl::toROSMsg(*cur_pcl_in_, pcl_out_msg);
     pcl_out_msg.header = pcl_in_msg->header;
     pcl_out_msg.header.frame_id = "camera_init";
-    pub_UndistortPcl.publish(pcl_out_msg);
+    pub_UndistortPcl->publish(pcl_out_msg);
   }
 
   /// Record last measurements
