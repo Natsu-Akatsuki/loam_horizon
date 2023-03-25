@@ -46,10 +46,10 @@ void ImuProcess::IntegrateGyr(
   for (const auto &imu: v_imu) {
     gyr_int_.Integrate(imu);
   }
-  ROS_INFO("integrate rotation angle [x, y, z]: [%.2f, %.2f, %.2f]",
-           gyr_int_.GetRot().angleX() * 180.0 / M_PI,
-           gyr_int_.GetRot().angleY() * 180.0 / M_PI,
-           gyr_int_.GetRot().angleZ() * 180.0 / M_PI);
+  RCLCPP_INFO(rclcpp::get_logger("data_process"), "integrate rotation angle [x, y, z]: [%.2f, %.2f, %.2f]",
+              gyr_int_.GetRot().angleX() * 180.0 / M_PI,
+              gyr_int_.GetRot().angleY() * 180.0 / M_PI,
+              gyr_int_.GetRot().angleZ() * 180.0 / M_PI);
 }
 
 void ImuProcess::UndistortPcl(const PointCloudXYZI::Ptr &pcl_in_out,
