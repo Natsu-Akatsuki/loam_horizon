@@ -1,12 +1,12 @@
 #include "imu_processor/gyr_int.h"
-#include <ros/ros.h>
+#include "rcpputils/asserts.hpp"
 
 using Sophus::SO3d;
 
 GyrInt::GyrInt() : start_timestamp_(-1), last_imu_(nullptr) {}
 
 void GyrInt::Reset(double start_timestamp,
-                   const sensor_msgs::ImuConstPtr &lastimu) {
+                   const sensor_msgs::msg::Imu::ConstPtr &lastimu) {
   start_timestamp_ = start_timestamp;
   last_imu_ = lastimu;
 
@@ -22,22 +22,23 @@ const Sophus::SO3d GyrInt::GetRot() const {
   }
 }
 
-void GyrInt::Integrate(const sensor_msgs::ImuConstPtr &imu) {
+void GyrInt::Integrate(const sensor_msgs::msg::Imu::ConstPtr &imu) {
   /// Init
   if (v_rot_.empty()) {
-    ROS_ASSERT(start_timestamp_ > 0);
-    ROS_ASSERT(last_imu_ != nullptr);
+    rcpputils::assert_true(start_timestamp_ > 0);
+    rcpputils::assert_true(last_imu_ != nullptr);
 
     /// Identity rotation
     v_rot_.push_back(SO3d());
 
     /// Interpolate imu in
-    sensor_msgs::ImuPtr imu_inter(new sensor_msgs::Imu());
-    double dt1 = start_timestamp_ - last_imu_->header.stamp.toSec();
-    double dt2 = imu->header.stamp.toSec() - start_timestamp_;
-    ROS_ASSERT_MSG(dt1 >= 0 && dt2 >= 0, "%f - %f - %f",
-                   last_imu_->header.stamp.toSec(), start_timestamp_,
-                   imu->header.stamp.toSec());
+    sensor_msgs::msg::Imu::SharedPtr imu_inter(new sensor_msgs::msg::Imu());
+    double dt1 = (rclcpp::Time(start_timestamp_) - rclcpp::Time(last_imu_->header.stamp)).seconds();
+    double dt2 = rclcpp::Time(imu->header.stamp).seconds() - start_timestamp_;
+    // todo：暂无对应API
+    // ROS_ASSERT_MSG(dt1 >= 0 && dt2 >= 0, "%f - %f - %f",
+    //                last_imu_->header.stamp).seconds(), start_timestamp_,
+    //   imu->header.stamp).seconds());
     double w1 = dt2 / (dt1 + dt2 + 1e-9);
     double w2 = dt1 / (dt1 + dt2 + 1e-9);
 
@@ -46,7 +47,7 @@ void GyrInt::Integrate(const sensor_msgs::ImuConstPtr &imu) {
     const auto &gyr2 = imu->angular_velocity;
     const auto &acc2 = imu->linear_acceleration;
 
-    imu_inter->header.stamp.fromSec(start_timestamp_);
+    imu_inter->header.stamp = rclcpp::Time(static_cast<uint64_t>(start_timestamp_ * 1e9));
     imu_inter->angular_velocity.x = w1 * gyr1.x + w2 * gyr2.x;
     imu_inter->angular_velocity.y = w1 * gyr1.y + w2 * gyr2.y;
     imu_inter->angular_velocity.z = w1 * gyr1.z + w2 * gyr2.z;
@@ -60,11 +61,11 @@ void GyrInt::Integrate(const sensor_msgs::ImuConstPtr &imu) {
   ///
   const SO3d &rot_last = v_rot_.back();
   const auto &imumsg_last = v_imu_.back();
-  const double &time_last = imumsg_last->header.stamp.toSec();
+  const double &time_last = rclcpp::Time(imumsg_last->header.stamp).seconds();
   Eigen::Vector3d gyr_last(imumsg_last->angular_velocity.x,
                            imumsg_last->angular_velocity.y,
                            imumsg_last->angular_velocity.z);
-  double time = imu->header.stamp.toSec();
+  double time = rclcpp::Time(imu->header.stamp).seconds();
   Eigen::Vector3d gyr(imu->angular_velocity.x, imu->angular_velocity.y,
                       imu->angular_velocity.z);
   assert(time >= 0);
