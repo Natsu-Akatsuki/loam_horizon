@@ -34,7 +34,7 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 #include <nav_msgs/Odometry.h>
-#include <opencv/cv.h>
+#include <opencv2/opencv.hpp>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/point_cloud.h>
@@ -661,38 +661,38 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
   /// Visualize curvature
   if (b_viz_curv) {
     std_msgs::Header ros_hdr = laserCloudMsg->header;
-    ros_hdr.frame_id = "/aft_mapped";
+    ros_hdr.frame_id = "aft_mapped";
     VisualizeCurvature(cloudCurvature, cloudLabel, *laserCloud, ros_hdr);
   }
 
   sensor_msgs::PointCloud2 laserCloudOutMsg;
   pcl::toROSMsg(*laserCloud, laserCloudOutMsg);
   laserCloudOutMsg.header.stamp = laserCloudMsg->header.stamp;
-  laserCloudOutMsg.header.frame_id = "/aft_mapped";
+  laserCloudOutMsg.header.frame_id = "aft_mapped";
   pubLaserCloud.publish(laserCloudOutMsg);
 
   sensor_msgs::PointCloud2 cornerPointsSharpMsg;
   pcl::toROSMsg(cornerPointsSharp, cornerPointsSharpMsg);
   cornerPointsSharpMsg.header.stamp = laserCloudMsg->header.stamp;
-  cornerPointsSharpMsg.header.frame_id = "/aft_mapped";
+  cornerPointsSharpMsg.header.frame_id = "aft_mapped";
   pubCornerPointsSharp.publish(cornerPointsSharpMsg);
 
   sensor_msgs::PointCloud2 cornerPointsLessSharpMsg;
   pcl::toROSMsg(cornerPointsLessSharp, cornerPointsLessSharpMsg);
   cornerPointsLessSharpMsg.header.stamp = laserCloudMsg->header.stamp;
-  cornerPointsLessSharpMsg.header.frame_id = "/aft_mapped";
+  cornerPointsLessSharpMsg.header.frame_id = "aft_mapped";
   pubCornerPointsLessSharp.publish(cornerPointsLessSharpMsg);
 
   sensor_msgs::PointCloud2 surfPointsFlat2;
   pcl::toROSMsg(surfPointsFlat, surfPointsFlat2);
   surfPointsFlat2.header.stamp = laserCloudMsg->header.stamp;
-  surfPointsFlat2.header.frame_id = "/aft_mapped";
+  surfPointsFlat2.header.frame_id = "aft_mapped";
   pubSurfPointsFlat.publish(surfPointsFlat2);
 
   sensor_msgs::PointCloud2 surfPointsLessFlat2;
   pcl::toROSMsg(surfPointsLessFlat, surfPointsLessFlat2);
   surfPointsLessFlat2.header.stamp = laserCloudMsg->header.stamp;
-  surfPointsLessFlat2.header.frame_id = "/aft_mapped";
+  surfPointsLessFlat2.header.frame_id = "aft_mapped";
   pubSurfPointsLessFlat.publish(surfPointsLessFlat2);
 
   // pub each scam
@@ -701,7 +701,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
       sensor_msgs::PointCloud2 scanMsg;
       pcl::toROSMsg(laserCloudScans[i], scanMsg);
       scanMsg.header.stamp = laserCloudMsg->header.stamp;
-      scanMsg.header.frame_id = "/aft_mapped";
+      scanMsg.header.frame_id = "aft_mapped";
       pubEachScan[i].publish(scanMsg);
     }
   }

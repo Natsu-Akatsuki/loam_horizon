@@ -1,8 +1,8 @@
-cmake_minimum_required(VERSION 2.8.3)
+cmake_minimum_required(VERSION 3.16.0')
 project(loam_horizon)
 
 set(CMAKE_BUILD_TYPE "Release")
-set(CMAKE_CXX_FLAGS "-std=c++11 -fext-numeric-literals")
+set(CMAKE_CXX_FLAGS "-std=c++14 -fext-numeric-literals")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -Wall -g")
 
 find_package(catkin REQUIRED COMPONENTS
