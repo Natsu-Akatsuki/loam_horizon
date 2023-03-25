@@ -62,7 +62,6 @@
 #include "loam_horizon/common.h"
 #include "loam_horizon/tic_toc.h"
 
-auto node = std::make_shared<rclcpp::Node>("laserMapping");
 
 int frameCount = 0;
 
@@ -263,7 +262,7 @@ void laserOdometryHandler(const nav_msgs::msg::Odometry::ConstPtr &laserOdometry
   pubOdomAftMappedHighFrec->publish(odomAftMapped);
 }
 
-void process() {
+void process(rclcpp::Node::SharedPtr node) {
   while (1) {
     while (!cornerLastBuf.empty() && !surfLastBuf.empty() &&
            !fullResBuf.empty() && !odometryBuf.empty()) {
@@ -967,7 +966,7 @@ void process() {
 
 int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
-
+  auto node = std::make_shared<rclcpp::Node>("laserMapping");
 
   float lineRes = 0;
   float planeRes = 0;
@@ -997,8 +996,10 @@ int main(int argc, char **argv) {
     laserCloudCornerArray[i].reset(new pcl::PointCloud<PointType>());
     laserCloudSurfArray[i].reset(new pcl::PointCloud<PointType>());
   }
+  std::thread mapping_process{[node]() {
+      process(node);
+  }};
 
-  std::thread mapping_process{process};
 
   rclcpp::spin(node);
 
