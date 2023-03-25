@@ -77,14 +77,6 @@ int cloudLabel[400000];
 
 bool comp(int i, int j) { return (cloudCurvature[i] < cloudCurvature[j]); }
 
-rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloud;
-rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubCornerPointsSharp;
-rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubCornerPointsLessSharp;
-rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubSurfPointsFlat;
-rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubSurfPointsLessFlat;
-rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubRemovePoints;
-rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_curvature;
-std::vector<rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr> pubEachScan;
 
 bool PUB_EACH_LINE = true;
 
@@ -120,631 +112,649 @@ void removeClosedPointCloud(const pcl::PointCloud<PointT> &cloud_in,
   cloud_out.is_dense = true;
 }
 
-template<typename PointT>
-void VisualizeCurvature(float *v_curv, int *v_label,
-                        const pcl::PointCloud<PointT> &pcl_in,
-                        const std_msgs::msg::Header &hdr) {
-    RCUTILS_ASSERT(pcl_in.size() < 400000);
 
-  /// Same marker attributes
-  visualization_msgs::msg::Marker txt_mk;
-  txt_mk.header = hdr;
-  txt_mk.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
-  txt_mk.ns = "default";
-  txt_mk.id = 0;
-  txt_mk.action = visualization_msgs::msg::Marker::ADD;
-  txt_mk.pose.orientation.x = 0;
-  txt_mk.pose.orientation.y = 0;
-  txt_mk.pose.orientation.z = 0;
-  txt_mk.pose.orientation.w = 1;
-  txt_mk.scale.z = 0.05;
-  txt_mk.color.a = 1;
-  txt_mk.color.r = 0;
-  txt_mk.color.g = 1;
-  txt_mk.color.b = 0;
+class scanRegistration : public rclcpp::Node {
+public:
+    scanRegistration() : Node("scanRegistration") {
+      subLaserCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+        "/livox_undistort", 10, std::bind(&scanRegistration::laserCloudHandler, this, std::placeholders::_1));
+      pubLaserCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>("/velodyne_cloud_2", 100);
+      pubCornerPointsSharp = this->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_sharp", 100);
+      pubCornerPointsLessSharp = this->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_less_sharp", 100);
+      pubSurfPointsFlat = this->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_flat", 100);
+      pubSurfPointsLessFlat = this->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_less_flat", 100);
+      pubRemovePoints = this->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_remove_points", 100);
+      pub_curvature = this->create_publisher<visualization_msgs::msg::MarkerArray>("/curvature", 100);
 
-  static visualization_msgs::msg::MarkerArray curv_txt_msg;
-  // for (size_t i = 0; i < curv_txt_msg.markers.size(); ++i) {
-  //   auto &mk_i = curv_txt_msg.markers[i];
-  //   mk_i = txt_mk;
-  //   mk_i.header.stamp = txt_mk.header.stamp - ros::Duration(0.001);
-  //   mk_i.action = visualization_msgs::msg::Marker::DELETE;
-  //   mk_i.text = "";
-  //   mk_i.ns = "old";
-  //   mk_i.color.a = 0;
-  // }
-  // pub_curvature->publish(curv_txt_msg);
-  // ros::Rate r(200);
-  // r.sleep();
+      N_SCANS = this->declare_parameter("scan_line", 6); // Horizon has 6 scan lines
+      THRESHOLD_FLAT = this->declare_parameter("threshold_flat", 0.01);
+      THRESHOLD_SHARP = this->declare_parameter("threshold_sharp", 0.01);
 
-  /// Marger array message
-  static size_t pre_pt_num = 0;
-  size_t pt_num = pcl_in.size();
-
-  if (pre_pt_num == 0) {
-    curv_txt_msg.markers.reserve(400000);
-  }
-  if (pre_pt_num > pt_num) {
-    curv_txt_msg.markers.resize(pre_pt_num);
-  } else {
-    curv_txt_msg.markers.resize(pt_num);
-  }
-
-  int edge_num = 0, edgeless_num = 0, flat_num = 0, flatless_num = 0, nn = 0;
-
-  /// Add marker and namespace
-  for (size_t i = 0; i < pcl_in.size(); ++i) {
-    auto curv = v_curv[i];
-    auto label = v_label[i];  /// -1: flat, 0: less-flat, 1:less-edge, 2:edge
-    const auto &pt = pcl_in[i];
-
-    switch (label) {
-      case 2: {
-        /// edge
-        auto &mk_i = curv_txt_msg.markers[i];
-        mk_i = txt_mk;
-        mk_i.ns = "edge";
-        mk_i.id = i;
-        mk_i.pose.position.x = pt.x;
-        mk_i.pose.position.y = pt.y;
-        mk_i.pose.position.z = pt.z;
-        mk_i.color.a = 1;
-        mk_i.color.r = 1;
-        mk_i.color.g = 0;
-        mk_i.color.b = 0;
-        char cstr[10];
-        snprintf(cstr, 9, "%.2f", curv);
-        mk_i.text = std::string(cstr);
-        /// debug
-        if (dbg_show_id) {
-          mk_i.text = std::to_string(i);
-        }
-
-        edge_num++;
-        break;
-      }
-      case 1: {
-        /// less edge
-        auto &mk_i = curv_txt_msg.markers[i];
-        mk_i = txt_mk;
-        mk_i.ns = "edgeless";
-        mk_i.id = i;
-        mk_i.pose.position.x = pt.x;
-        mk_i.pose.position.y = pt.y;
-        mk_i.pose.position.z = pt.z;
-        mk_i.color.a = 0.5;
-        mk_i.color.r = 0.5;
-        mk_i.color.g = 0;
-        mk_i.color.b = 0.8;
-        char cstr[10];
-        snprintf(cstr, 9, "%.2f", curv);
-        mk_i.text = std::string(cstr);
-        /// debug
-        if (dbg_show_id) {
-          mk_i.text = std::to_string(i);
-        }
-
-        edgeless_num++;
-        break;
-      }
-      case 0: {
-        /// less flat
-        auto &mk_i = curv_txt_msg.markers[i];
-        mk_i = txt_mk;
-        mk_i.ns = "flatless";
-        mk_i.id = i;
-        mk_i.pose.position.x = pt.x;
-        mk_i.pose.position.y = pt.y;
-        mk_i.pose.position.z = pt.z;
-        mk_i.color.a = 0.5;
-        mk_i.color.r = 0;
-        mk_i.color.g = 0.5;
-        mk_i.color.b = 0.8;
-        char cstr[10];
-        snprintf(cstr, 9, "%.2f", curv);
-        mk_i.text = std::string(cstr);
-        /// debug
-        if (dbg_show_id) {
-          mk_i.text = std::to_string(i);
-        }
-
-        flatless_num++;
-        break;
-      }
-      case -1: {
-        /// flat
-        auto &mk_i = curv_txt_msg.markers[i];
-        mk_i = txt_mk;
-        mk_i.ns = "flat";
-        mk_i.id = i;
-        mk_i.pose.position.x = pt.x;
-        mk_i.pose.position.y = pt.y;
-        mk_i.pose.position.z = pt.z;
-        mk_i.color.a = 1;
-        mk_i.color.r = 0;
-        mk_i.color.g = 1;
-        mk_i.color.b = 0;
-        char cstr[10];
-        snprintf(cstr, 9, "%.2f", curv);
-        mk_i.text = std::string(cstr);
-        /// debug
-        if (dbg_show_id) {
-          mk_i.text = std::to_string(i);
-        }
-
-        flat_num++;
-        break;
-      }
-      default: {
-        /// Un-reliable
-        /// Do nothing for label=99
-        // ROS_ASSERT_MSG(false, "%d", label);
-        auto &mk_i = curv_txt_msg.markers[i];
-        mk_i = txt_mk;
-        mk_i.ns = "unreliable";
-        mk_i.id = i;
-        mk_i.pose.position.x = pt.x;
-        mk_i.pose.position.y = pt.y;
-        mk_i.pose.position.z = pt.z;
-        mk_i.color.a = 0;
-        mk_i.color.r = 0;
-        mk_i.color.g = 0;
-        mk_i.color.b = 0;
-        char cstr[10];
-        snprintf(cstr, 9, "%.2f", curv);
-        mk_i.text = std::string(cstr);
-
-        nn++;
-        break;
-      }
-    }
-  }
-  RCLCPP_INFO(rclcpp::get_logger("scanRegistration"),
-              "edge/edgeless/flatless/flat/nn num: [%d / %d / %d / %d / %d] - %lu",
-              edge_num, edgeless_num, flatless_num, flat_num, nn, pt_num);
-
-  /// Delete old points
-  if (pre_pt_num > pt_num) {
-    RCLCPP_WARN(rclcpp::get_logger("scanRegistration"), "%lu > %lu", pre_pt_num, pt_num);
-    // curv_txt_msg.markers.resize(pre_pt_num);
-    for (size_t i = pt_num; i < pre_pt_num; ++i) {
-      auto &mk_i = curv_txt_msg.markers[i];
-      mk_i.action = visualization_msgs::msg::Marker::DELETE;
-      mk_i.color.a = 0;
-      mk_i.color.r = 0;
-      mk_i.color.g = 0;
-      mk_i.color.b = 0;
-      mk_i.ns = "old";
-      mk_i.text = "";
-    }
-  }
-  pre_pt_num = pt_num;
-
-  pub_curvature->publish(curv_txt_msg);
-}
-
-void laserCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &laserCloudMsg) {
-  if (!systemInited) {
-    systemInitCount++;
-    if (systemInitCount >= systemDelay) {
-      systemInited = true;
-    } else
-      return;
-  }
-
-  TicToc t_whole;
-  TicToc t_prepare;
-  std::vector<int> scanStartInd(N_SCANS, 0);
-  std::vector<int> scanEndInd(N_SCANS, 0);
-
-  pcl::PointCloud<PointType> laserCloudIn;
-  pcl::fromROSMsg(*laserCloudMsg, laserCloudIn);
-  std::vector<int> indices;
-
-  pcl::removeNaNFromPointCloud(laserCloudIn, laserCloudIn, indices);
-  removeClosedPointCloud(laserCloudIn, laserCloudIn, MINIMUM_RANGE);
-
-  int cloudSize = laserCloudIn.points.size();
-  int count = cloudSize;
-  PointType point;
-  std::vector<pcl::PointCloud<PointType>> laserCloudScans(N_SCANS);
-  for (int i = 0; i < cloudSize; i++) {
-    point.x = laserCloudIn.points[i].x;
-    point.y = laserCloudIn.points[i].y;
-    point.z = laserCloudIn.points[i].z;
-    point.intensity = laserCloudIn.points[i].intensity;
-    point.curvature = laserCloudIn.points[i].curvature;
-    int scanID = 0;
-    if (N_SCANS == 6) {
-      scanID = (int) point.intensity;
-    }
-    laserCloudScans[scanID].push_back(point);
-  }
-
-  cloudSize = count;
-  printf("points size %d \n", cloudSize);
-
-  pcl::PointCloud<PointType>::Ptr laserCloud(new pcl::PointCloud<PointType>());
-  for (int i = 0; i < N_SCANS; i++) {
-    scanStartInd[i] = laserCloud->size() + 5;
-    *laserCloud += laserCloudScans[i];
-    scanEndInd[i] = laserCloud->size() - 6;
-    // RCLCPP_INFO("scan %d start-end [%d, %d]", i, scanStartInd[i],
-    // scanEndInd[i]);
-  }
-
-  printf("prepare time %f \n", t_prepare.toc());
-
-  int kNumCurvSize = 5;
-  constexpr int kNumRegion = 50;       // 6
-  constexpr int kNumEdge = 2;          // 2
-  constexpr int kNumFlat = 4;          // 4
-  constexpr int kNumEdgeNeighbor = 5;  // 5;
-  constexpr int kNumFlatNeighbor = 5;  // 5;
-  float kThresholdSharp = 50;          // 0.1;
-  float kThresholdFlat = 30;           // 0.1;
-  constexpr float kThresholdLessflat = 0.1;
-
-  constexpr float kDistanceFaraway = 25;
-  for (int i = 5; i < cloudSize - 5; i++) {
-    float dis = sqrt(laserCloud->points[i].x * laserCloud->points[i].x +
-                     laserCloud->points[i].y * laserCloud->points[i].y +
-                     laserCloud->points[i].z * laserCloud->points[i].z);
-    if (dis > kDistanceFaraway) {
-      kNumCurvSize = 2;
-    }
-    float diffX = 0, diffY = 0, diffZ = 0;
-    for (int j = 1; j <= kNumCurvSize; ++j) {
-      diffX += laserCloud->points[i - j].x + laserCloud->points[i + j].x;
-      diffY += laserCloud->points[i - j].y + laserCloud->points[i + j].y;
-      diffZ += laserCloud->points[i - j].z + laserCloud->points[i + j].z;
-    }
-    diffX -= 2 * kNumCurvSize * laserCloud->points[i].x;
-    diffY -= 2 * kNumCurvSize * laserCloud->points[i].y;
-    diffZ -= 2 * kNumCurvSize * laserCloud->points[i].z;
-    /*
-    float diffX = laserCloud->points[i - 5].x + laserCloud->points[i - 4].x +
-                  laserCloud->points[i - 3].x + laserCloud->points[i - 2].x +
-                  laserCloud->points[i - 1].x - 10 * laserCloud->points[i].x +
-                  laserCloud->points[i + 1].x + laserCloud->points[i + 2].x +
-                  laserCloud->points[i + 3].x + laserCloud->points[i + 4].x +
-                  laserCloud->points[i + 5].x;
-    float diffY = laserCloud->points[i - 5].y + laserCloud->points[i - 4].y +
-                  laserCloud->points[i - 3].y + laserCloud->points[i - 2].y +
-                  laserCloud->points[i - 1].y - 10 * laserCloud->points[i].y +
-                  laserCloud->points[i + 1].y + laserCloud->points[i + 2].y +
-                  laserCloud->points[i + 3].y + laserCloud->points[i + 4].y +
-                  laserCloud->points[i + 5].y;
-    float diffZ = laserCloud->points[i - 5].z + laserCloud->points[i - 4].z +
-                  laserCloud->points[i - 3].z + laserCloud->points[i - 2].z +
-                  laserCloud->points[i - 1].z - 10 * laserCloud->points[i].z +
-                  laserCloud->points[i + 1].z + laserCloud->points[i + 2].z +
-                  laserCloud->points[i + 3].z + laserCloud->points[i + 4].z +
-                  laserCloud->points[i + 5].z;
-                  */
-
-    float tmp2 = diffX * diffX + diffY * diffY + diffZ * diffZ;
-    float tmp = sqrt(tmp2);
-
-    cloudCurvature[i] = tmp2;
-    if (b_normalize_curv) {
-      /// use normalized curvature
-      cloudCurvature[i] = tmp / (2 * kNumCurvSize * dis + 1e-3);
-    }
-    cloudSortInd[i] = i;
-    cloudNeighborPicked[i] = 0;
-    cloudLabel[i] = 0;
-
-    /// Mark un-reliable points
-    constexpr float kMaxFeatureDis = 1e4;
-    if (fabs(dis) > kMaxFeatureDis || fabs(dis) < 1e-4 || !std::isfinite(dis)) {
-      cloudLabel[i] = 99;
-      cloudNeighborPicked[i] = 1;
-    }
-  }
-
-  for (int i = 5; i < cloudSize - 6; i++) {
-    float diffX = laserCloud->points[i + 1].x - laserCloud->points[i].x;
-    float diffY = laserCloud->points[i + 1].y - laserCloud->points[i].y;
-    float diffZ = laserCloud->points[i + 1].z - laserCloud->points[i].z;
-    float diff = diffX * diffX + diffY * diffY + diffZ * diffZ;
-
-    float diffX2 = laserCloud->points[i].x - laserCloud->points[i - 1].x;
-    float diffY2 = laserCloud->points[i].y - laserCloud->points[i - 1].y;
-    float diffZ2 = laserCloud->points[i].z - laserCloud->points[i - 1].z;
-    float diff2 = diffX2 * diffX2 + diffY2 * diffY2 + diffZ2 * diffZ2;
-    float dis = laserCloud->points[i].x * laserCloud->points[i].x +
-                laserCloud->points[i].y * laserCloud->points[i].y +
-                laserCloud->points[i].z * laserCloud->points[i].z;
-
-    if (diff > 0.00015 * dis && diff2 > 0.00015 * dis) {
-      cloudNeighborPicked[i] = 1;
-    }
-  }
-
-  TicToc t_pts;
-
-  pcl::PointCloud<PointType> cornerPointsSharp;
-  pcl::PointCloud<PointType> cornerPointsLessSharp;
-  pcl::PointCloud<PointType> surfPointsFlat;
-  pcl::PointCloud<PointType> surfPointsLessFlat;
-
-  if (b_normalize_curv) {
-    kThresholdFlat = THRESHOLD_FLAT;
-    kThresholdSharp = THRESHOLD_SHARP;
-  }
-
-  float t_q_sort = 0;
-  for (int i = 0; i < N_SCANS; i++) {
-    if (scanEndInd[i] - scanStartInd[i] < kNumCurvSize) continue;
-    pcl::PointCloud<PointType>::Ptr surfPointsLessFlatScan(
-      new pcl::PointCloud<PointType>);
-
-    /// debug
-    if (b_only_1_scan && i > 0) {
-      break;
-    }
-
-    for (int j = 0; j < kNumRegion; j++) {
-      int sp =
-        scanStartInd[i] + (scanEndInd[i] - scanStartInd[i]) * j / kNumRegion;
-      int ep = scanStartInd[i] +
-               (scanEndInd[i] - scanStartInd[i]) * (j + 1) / kNumRegion - 1;
-      //      RCLCPP_INFO("scan [%d], id from-to [%d-%d] in [%d-%d]", i, sp, ep,
-      //               scanStartInd[i], scanEndInd[i]);
-
-      TicToc t_tmp;
-      //      std::sort(cloudSortInd + sp, cloudSortInd + ep + 1, comp);
-      // sort the curvatures from small to large
-      for (int k = sp + 1; k <= ep; k++) {
-        for (int l = k; l >= sp + 1; l--) {
-          if (cloudCurvature[cloudSortInd[l]] <
-              cloudCurvature[cloudSortInd[l - 1]]) {
-            int temp = cloudSortInd[l - 1];
-            cloudSortInd[l - 1] = cloudSortInd[l];
-            cloudSortInd[l] = temp;
-          }
+      if (PUB_EACH_LINE) {
+        for (int i = 0; i < N_SCANS; i++) {
+          rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr tmp = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+            "/laser_scanid_" + std::to_string(i), 100);
+          pubEachScan.push_back(tmp);
         }
       }
 
-      float SumCurRegion = 0.0;
-      float MaxCurRegion = cloudCurvature[cloudSortInd[ep]];  //the largest curvature in sp ~ ep
-      for (int k = ep - 1; k >= sp; k--) {
-        SumCurRegion += cloudCurvature[cloudSortInd[k]];
+    }
+
+    template<typename PointT>
+    void VisualizeCurvature(float *v_curv, int *v_label,
+                            const pcl::PointCloud<PointT> &pcl_in,
+                            const std_msgs::msg::Header &hdr) {
+        RCUTILS_ASSERT(pcl_in.size() < 400000);
+
+      /// Same marker attributes
+      visualization_msgs::msg::Marker txt_mk;
+      txt_mk.header = hdr;
+      txt_mk.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+      txt_mk.ns = "default";
+      txt_mk.id = 0;
+      txt_mk.action = visualization_msgs::msg::Marker::ADD;
+      txt_mk.pose.orientation.x = 0;
+      txt_mk.pose.orientation.y = 0;
+      txt_mk.pose.orientation.z = 0;
+      txt_mk.pose.orientation.w = 1;
+      txt_mk.scale.z = 0.05;
+      txt_mk.color.a = 1;
+      txt_mk.color.r = 0;
+      txt_mk.color.g = 1;
+      txt_mk.color.b = 0;
+
+      static visualization_msgs::msg::MarkerArray curv_txt_msg;
+      // for (size_t i = 0; i < curv_txt_msg.markers.size(); ++i) {
+      //   auto &mk_i = curv_txt_msg.markers[i];
+      //   mk_i = txt_mk;
+      //   mk_i.header.stamp = txt_mk.header.stamp - ros::Duration(0.001);
+      //   mk_i.action = visualization_msgs::msg::Marker::DELETE;
+      //   mk_i.text = "";
+      //   mk_i.ns = "old";
+      //   mk_i.color.a = 0;
+      // }
+      // pub_curvature->publish(curv_txt_msg);
+      // ros::Rate r(200);
+      // r.sleep();
+
+      /// Marger array message
+      static size_t pre_pt_num = 0;
+      size_t pt_num = pcl_in.size();
+
+      if (pre_pt_num == 0) {
+        curv_txt_msg.markers.reserve(400000);
+      }
+      if (pre_pt_num > pt_num) {
+        curv_txt_msg.markers.resize(pre_pt_num);
+      } else {
+        curv_txt_msg.markers.resize(pt_num);
       }
 
-      if (MaxCurRegion > 3 * SumCurRegion)
-        cloudNeighborPicked[cloudSortInd[ep]] = 1;
+      int edge_num = 0, edgeless_num = 0, flat_num = 0, flatless_num = 0, nn = 0;
 
-      t_q_sort += t_tmp.toc();
+      /// Add marker and namespace
+      for (size_t i = 0; i < pcl_in.size(); ++i) {
+        auto curv = v_curv[i];
+        auto label = v_label[i];  /// -1: flat, 0: less-flat, 1:less-edge, 2:edge
+        const auto &pt = pcl_in[i];
 
-      if (true) {
-        for (int tt = sp; tt < ep - 1; ++tt) {
-          rcpputils::assert_true(cloudCurvature[cloudSortInd[tt]] <=
-                     cloudCurvature[cloudSortInd[tt + 1]]);
-        }
-      }
+        switch (label) {
+          case 2: {
+            /// edge
+            auto &mk_i = curv_txt_msg.markers[i];
+            mk_i = txt_mk;
+            mk_i.ns = "edge";
+            mk_i.id = i;
+            mk_i.pose.position.x = pt.x;
+            mk_i.pose.position.y = pt.y;
+            mk_i.pose.position.z = pt.z;
+            mk_i.color.a = 1;
+            mk_i.color.r = 1;
+            mk_i.color.g = 0;
+            mk_i.color.b = 0;
+            char cstr[10];
+            snprintf(cstr, 9, "%.2f", curv);
+            mk_i.text = std::string(cstr);
+            /// debug
+            if (dbg_show_id) {
+              mk_i.text = std::to_string(i);
+            }
 
-      int largestPickedNum = 0;
-      for (int k = ep; k >= sp; k--) {
-        int ind = cloudSortInd[k];
-
-        if (cloudNeighborPicked[ind] != 0) continue;
-
-        if (cloudCurvature[ind] > kThresholdSharp) {
-          largestPickedNum++;
-          if (largestPickedNum <= kNumEdge) {
-            cloudLabel[ind] = 2;
-            cornerPointsSharp.push_back(laserCloud->points[ind]);
-            cornerPointsLessSharp.push_back(laserCloud->points[ind]);
-            // RCLCPP_INFO("pick sharp at sort_id [%d], primary id[%d]", k, ind);
-            // if (ind == 211 || ind == 212 || ind == 213 || ind == 214) {
-            //   const auto &pt = laserCloud->points[ind];
-            //   printf("%d-[%f, %f, %f]\n", ind, pt.x, pt.y, pt.z);
-            // }
-          } else if (largestPickedNum <= 20) {
-            cloudLabel[ind] = 1;
-            cornerPointsLessSharp.push_back(laserCloud->points[ind]);
-          } else {
+            edge_num++;
             break;
           }
-
-          cloudNeighborPicked[ind] = 1;
-
-          for (int l = 1; l <= kNumEdgeNeighbor; l++) {
-            float diffX = laserCloud->points[ind + l].x -
-                          laserCloud->points[ind + l - 1].x;
-            float diffY = laserCloud->points[ind + l].y -
-                          laserCloud->points[ind + l - 1].y;
-            float diffZ = laserCloud->points[ind + l].z -
-                          laserCloud->points[ind + l - 1].z;
-            if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.02) {
-              break;
+          case 1: {
+            /// less edge
+            auto &mk_i = curv_txt_msg.markers[i];
+            mk_i = txt_mk;
+            mk_i.ns = "edgeless";
+            mk_i.id = i;
+            mk_i.pose.position.x = pt.x;
+            mk_i.pose.position.y = pt.y;
+            mk_i.pose.position.z = pt.z;
+            mk_i.color.a = 0.5;
+            mk_i.color.r = 0.5;
+            mk_i.color.g = 0;
+            mk_i.color.b = 0.8;
+            char cstr[10];
+            snprintf(cstr, 9, "%.2f", curv);
+            mk_i.text = std::string(cstr);
+            /// debug
+            if (dbg_show_id) {
+              mk_i.text = std::to_string(i);
             }
 
-            cloudNeighborPicked[ind + l] = 1;
-          }
-          for (int l = -1; l >= -kNumEdgeNeighbor; l--) {
-            float diffX = laserCloud->points[ind + l].x -
-                          laserCloud->points[ind + l + 1].x;
-            float diffY = laserCloud->points[ind + l].y -
-                          laserCloud->points[ind + l + 1].y;
-            float diffZ = laserCloud->points[ind + l].z -
-                          laserCloud->points[ind + l + 1].z;
-            if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.02) {
-              break;
-            }
-
-            cloudNeighborPicked[ind + l] = 1;
-          }
-        }
-      }
-
-      int smallestPickedNum = 0;
-      for (int k = sp; k <= ep; k++) {
-        int ind = cloudSortInd[k];
-
-        if (cloudNeighborPicked[ind] != 0) continue;
-
-        if (cloudCurvature[ind] < kThresholdFlat) {
-          cloudLabel[ind] = -1;
-          surfPointsFlat.push_back(laserCloud->points[ind]);
-          cloudNeighborPicked[ind] = 1;
-
-          smallestPickedNum++;
-          if (smallestPickedNum >= kNumFlat) {
+            edgeless_num++;
             break;
           }
-
-          for (int l = 1; l <= kNumFlatNeighbor; l++) {
-            float diffX = laserCloud->points[ind + l].x -
-                          laserCloud->points[ind + l - 1].x;
-            float diffY = laserCloud->points[ind + l].y -
-                          laserCloud->points[ind + l - 1].y;
-            float diffZ = laserCloud->points[ind + l].z -
-                          laserCloud->points[ind + l - 1].z;
-            if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.02) {
-              break;
+          case 0: {
+            /// less flat
+            auto &mk_i = curv_txt_msg.markers[i];
+            mk_i = txt_mk;
+            mk_i.ns = "flatless";
+            mk_i.id = i;
+            mk_i.pose.position.x = pt.x;
+            mk_i.pose.position.y = pt.y;
+            mk_i.pose.position.z = pt.z;
+            mk_i.color.a = 0.5;
+            mk_i.color.r = 0;
+            mk_i.color.g = 0.5;
+            mk_i.color.b = 0.8;
+            char cstr[10];
+            snprintf(cstr, 9, "%.2f", curv);
+            mk_i.text = std::string(cstr);
+            /// debug
+            if (dbg_show_id) {
+              mk_i.text = std::to_string(i);
             }
 
-            cloudNeighborPicked[ind + l] = 1;
+            flatless_num++;
+            break;
           }
-          for (int l = -1; l >= -kNumFlatNeighbor; l--) {
-            float diffX = laserCloud->points[ind + l].x -
-                          laserCloud->points[ind + l + 1].x;
-            float diffY = laserCloud->points[ind + l].y -
-                          laserCloud->points[ind + l + 1].y;
-            float diffZ = laserCloud->points[ind + l].z -
-                          laserCloud->points[ind + l + 1].z;
-            if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.02) {
-              break;
+          case -1: {
+            /// flat
+            auto &mk_i = curv_txt_msg.markers[i];
+            mk_i = txt_mk;
+            mk_i.ns = "flat";
+            mk_i.id = i;
+            mk_i.pose.position.x = pt.x;
+            mk_i.pose.position.y = pt.y;
+            mk_i.pose.position.z = pt.z;
+            mk_i.color.a = 1;
+            mk_i.color.r = 0;
+            mk_i.color.g = 1;
+            mk_i.color.b = 0;
+            char cstr[10];
+            snprintf(cstr, 9, "%.2f", curv);
+            mk_i.text = std::string(cstr);
+            /// debug
+            if (dbg_show_id) {
+              mk_i.text = std::to_string(i);
             }
 
-            cloudNeighborPicked[ind + l] = 1;
+            flat_num++;
+            break;
+          }
+          default: {
+            /// Un-reliable
+            /// Do nothing for label=99
+            // ROS_ASSERT_MSG(false, "%d", label);
+            auto &mk_i = curv_txt_msg.markers[i];
+            mk_i = txt_mk;
+            mk_i.ns = "unreliable";
+            mk_i.id = i;
+            mk_i.pose.position.x = pt.x;
+            mk_i.pose.position.y = pt.y;
+            mk_i.pose.position.z = pt.z;
+            mk_i.color.a = 0;
+            mk_i.color.r = 0;
+            mk_i.color.g = 0;
+            mk_i.color.b = 0;
+            char cstr[10];
+            snprintf(cstr, 9, "%.2f", curv);
+            mk_i.text = std::string(cstr);
+
+            nn++;
+            break;
           }
         }
       }
+      RCLCPP_INFO(rclcpp::get_logger("scanRegistration"),
+                  "edge/edgeless/flatless/flat/nn num: [%d / %d / %d / %d / %d] - %lu",
+                  edge_num, edgeless_num, flatless_num, flat_num, nn, pt_num);
 
-      for (int k = sp; k <= ep; k++) {
-        if (cloudLabel[k] <= 0 && cloudCurvature[k] < kThresholdLessflat) {
-          surfPointsLessFlatScan->push_back(laserCloud->points[k]);
+      /// Delete old points
+      if (pre_pt_num > pt_num) {
+        RCLCPP_WARN(rclcpp::get_logger("scanRegistration"), "%lu > %lu", pre_pt_num, pt_num);
+        // curv_txt_msg.markers.resize(pre_pt_num);
+        for (size_t i = pt_num; i < pre_pt_num; ++i) {
+          auto &mk_i = curv_txt_msg.markers[i];
+          mk_i.action = visualization_msgs::msg::Marker::DELETE;
+          mk_i.color.a = 0;
+          mk_i.color.r = 0;
+          mk_i.color.g = 0;
+          mk_i.color.b = 0;
+          mk_i.ns = "old";
+          mk_i.text = "";
         }
+      }
+      pre_pt_num = pt_num;
+
+      pub_curvature->publish(curv_txt_msg);
+    }
+
+    void laserCloudHandler(sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg) {
+      if (!systemInited) {
+        systemInitCount++;
+        if (systemInitCount >= systemDelay) {
+          systemInited = true;
+        } else
+          return;
+      }
+
+      TicToc t_whole;
+      TicToc t_prepare;
+      std::vector<int> scanStartInd(N_SCANS, 0);
+      std::vector<int> scanEndInd(N_SCANS, 0);
+
+      pcl::PointCloud<PointType> laserCloudIn;
+      pcl::fromROSMsg(*laserCloudMsg, laserCloudIn);
+      std::vector<int> indices;
+
+      pcl::removeNaNFromPointCloud(laserCloudIn, laserCloudIn, indices);
+      removeClosedPointCloud(laserCloudIn, laserCloudIn, MINIMUM_RANGE);
+
+      int cloudSize = laserCloudIn.points.size();
+      int count = cloudSize;
+      PointType point;
+      std::vector<pcl::PointCloud<PointType>> laserCloudScans(N_SCANS);
+      for (int i = 0; i < cloudSize; i++) {
+        point.x = laserCloudIn.points[i].x;
+        point.y = laserCloudIn.points[i].y;
+        point.z = laserCloudIn.points[i].z;
+        point.intensity = laserCloudIn.points[i].intensity;
+        point.curvature = laserCloudIn.points[i].curvature;
+        int scanID = 0;
+        if (N_SCANS == 6) {
+          scanID = (int) point.intensity;
+        }
+        laserCloudScans[scanID].push_back(point);
+      }
+
+      cloudSize = count;
+      printf("points size %d \n", cloudSize);
+
+      pcl::PointCloud<PointType>::Ptr laserCloud(new pcl::PointCloud<PointType>());
+      for (int i = 0; i < N_SCANS; i++) {
+        scanStartInd[i] = laserCloud->size() + 5;
+        *laserCloud += laserCloudScans[i];
+        scanEndInd[i] = laserCloud->size() - 6;
+        // RCLCPP_INFO("scan %d start-end [%d, %d]", i, scanStartInd[i],
+        // scanEndInd[i]);
+      }
+
+      printf("prepare time %f \n", t_prepare.toc());
+
+      int kNumCurvSize = 5;
+      constexpr int kNumRegion = 50;       // 6
+      constexpr int kNumEdge = 2;          // 2
+      constexpr int kNumFlat = 4;          // 4
+      constexpr int kNumEdgeNeighbor = 5;  // 5;
+      constexpr int kNumFlatNeighbor = 5;  // 5;
+      float kThresholdSharp = 50;          // 0.1;
+      float kThresholdFlat = 30;           // 0.1;
+      constexpr float kThresholdLessflat = 0.1;
+
+      constexpr float kDistanceFaraway = 25;
+      for (int i = 5; i < cloudSize - 5; i++) {
+        float dis = sqrt(laserCloud->points[i].x * laserCloud->points[i].x +
+                         laserCloud->points[i].y * laserCloud->points[i].y +
+                         laserCloud->points[i].z * laserCloud->points[i].z);
+        if (dis > kDistanceFaraway) {
+          kNumCurvSize = 2;
+        }
+        float diffX = 0, diffY = 0, diffZ = 0;
+        for (int j = 1; j <= kNumCurvSize; ++j) {
+          diffX += laserCloud->points[i - j].x + laserCloud->points[i + j].x;
+          diffY += laserCloud->points[i - j].y + laserCloud->points[i + j].y;
+          diffZ += laserCloud->points[i - j].z + laserCloud->points[i + j].z;
+        }
+        diffX -= 2 * kNumCurvSize * laserCloud->points[i].x;
+        diffY -= 2 * kNumCurvSize * laserCloud->points[i].y;
+        diffZ -= 2 * kNumCurvSize * laserCloud->points[i].z;
+        /*
+        float diffX = laserCloud->points[i - 5].x + laserCloud->points[i - 4].x +
+                      laserCloud->points[i - 3].x + laserCloud->points[i - 2].x +
+                      laserCloud->points[i - 1].x - 10 * laserCloud->points[i].x +
+                      laserCloud->points[i + 1].x + laserCloud->points[i + 2].x +
+                      laserCloud->points[i + 3].x + laserCloud->points[i + 4].x +
+                      laserCloud->points[i + 5].x;
+        float diffY = laserCloud->points[i - 5].y + laserCloud->points[i - 4].y +
+                      laserCloud->points[i - 3].y + laserCloud->points[i - 2].y +
+                      laserCloud->points[i - 1].y - 10 * laserCloud->points[i].y +
+                      laserCloud->points[i + 1].y + laserCloud->points[i + 2].y +
+                      laserCloud->points[i + 3].y + laserCloud->points[i + 4].y +
+                      laserCloud->points[i + 5].y;
+        float diffZ = laserCloud->points[i - 5].z + laserCloud->points[i - 4].z +
+                      laserCloud->points[i - 3].z + laserCloud->points[i - 2].z +
+                      laserCloud->points[i - 1].z - 10 * laserCloud->points[i].z +
+                      laserCloud->points[i + 1].z + laserCloud->points[i + 2].z +
+                      laserCloud->points[i + 3].z + laserCloud->points[i + 4].z +
+                      laserCloud->points[i + 5].z;
+                      */
+
+        float tmp2 = diffX * diffX + diffY * diffY + diffZ * diffZ;
+        float tmp = sqrt(tmp2);
+
+        cloudCurvature[i] = tmp2;
+        if (b_normalize_curv) {
+          /// use normalized curvature
+          cloudCurvature[i] = tmp / (2 * kNumCurvSize * dis + 1e-3);
+        }
+        cloudSortInd[i] = i;
+        cloudNeighborPicked[i] = 0;
+        cloudLabel[i] = 0;
+
+        /// Mark un-reliable points
+        constexpr float kMaxFeatureDis = 1e4;
+        if (fabs(dis) > kMaxFeatureDis || fabs(dis) < 1e-4 || !std::isfinite(dis)) {
+          cloudLabel[i] = 99;
+          cloudNeighborPicked[i] = 1;
+        }
+      }
+
+      for (int i = 5; i < cloudSize - 6; i++) {
+        float diffX = laserCloud->points[i + 1].x - laserCloud->points[i].x;
+        float diffY = laserCloud->points[i + 1].y - laserCloud->points[i].y;
+        float diffZ = laserCloud->points[i + 1].z - laserCloud->points[i].z;
+        float diff = diffX * diffX + diffY * diffY + diffZ * diffZ;
+
+        float diffX2 = laserCloud->points[i].x - laserCloud->points[i - 1].x;
+        float diffY2 = laserCloud->points[i].y - laserCloud->points[i - 1].y;
+        float diffZ2 = laserCloud->points[i].z - laserCloud->points[i - 1].z;
+        float diff2 = diffX2 * diffX2 + diffY2 * diffY2 + diffZ2 * diffZ2;
+        float dis = laserCloud->points[i].x * laserCloud->points[i].x +
+                    laserCloud->points[i].y * laserCloud->points[i].y +
+                    laserCloud->points[i].z * laserCloud->points[i].z;
+
+        if (diff > 0.00015 * dis && diff2 > 0.00015 * dis) {
+          cloudNeighborPicked[i] = 1;
+        }
+      }
+
+      TicToc t_pts;
+
+      pcl::PointCloud<PointType> cornerPointsSharp;
+      pcl::PointCloud<PointType> cornerPointsLessSharp;
+      pcl::PointCloud<PointType> surfPointsFlat;
+      pcl::PointCloud<PointType> surfPointsLessFlat;
+
+      if (b_normalize_curv) {
+        kThresholdFlat = THRESHOLD_FLAT;
+        kThresholdSharp = THRESHOLD_SHARP;
+      }
+
+      float t_q_sort = 0;
+      for (int i = 0; i < N_SCANS; i++) {
+        if (scanEndInd[i] - scanStartInd[i] < kNumCurvSize) continue;
+        pcl::PointCloud<PointType>::Ptr surfPointsLessFlatScan(
+          new pcl::PointCloud<PointType>);
+
+        /// debug
+        if (b_only_1_scan && i > 0) {
+          break;
+        }
+
+        for (int j = 0; j < kNumRegion; j++) {
+          int sp =
+            scanStartInd[i] + (scanEndInd[i] - scanStartInd[i]) * j / kNumRegion;
+          int ep = scanStartInd[i] +
+                   (scanEndInd[i] - scanStartInd[i]) * (j + 1) / kNumRegion - 1;
+          //      RCLCPP_INFO("scan [%d], id from-to [%d-%d] in [%d-%d]", i, sp, ep,
+          //               scanStartInd[i], scanEndInd[i]);
+
+          TicToc t_tmp;
+          //      std::sort(cloudSortInd + sp, cloudSortInd + ep + 1, comp);
+          // sort the curvatures from small to large
+          for (int k = sp + 1; k <= ep; k++) {
+            for (int l = k; l >= sp + 1; l--) {
+              if (cloudCurvature[cloudSortInd[l]] <
+                  cloudCurvature[cloudSortInd[l - 1]]) {
+                int temp = cloudSortInd[l - 1];
+                cloudSortInd[l - 1] = cloudSortInd[l];
+                cloudSortInd[l] = temp;
+              }
+            }
+          }
+
+          float SumCurRegion = 0.0;
+          float MaxCurRegion = cloudCurvature[cloudSortInd[ep]];  //the largest curvature in sp ~ ep
+          for (int k = ep - 1; k >= sp; k--) {
+            SumCurRegion += cloudCurvature[cloudSortInd[k]];
+          }
+
+          if (MaxCurRegion > 3 * SumCurRegion)
+            cloudNeighborPicked[cloudSortInd[ep]] = 1;
+
+          t_q_sort += t_tmp.toc();
+
+          if (true) {
+            for (int tt = sp; tt < ep - 1; ++tt) {
+              rcpputils::assert_true(cloudCurvature[cloudSortInd[tt]] <=
+                                     cloudCurvature[cloudSortInd[tt + 1]]);
+            }
+          }
+
+          int largestPickedNum = 0;
+          for (int k = ep; k >= sp; k--) {
+            int ind = cloudSortInd[k];
+
+            if (cloudNeighborPicked[ind] != 0) continue;
+
+            if (cloudCurvature[ind] > kThresholdSharp) {
+              largestPickedNum++;
+              if (largestPickedNum <= kNumEdge) {
+                cloudLabel[ind] = 2;
+                cornerPointsSharp.push_back(laserCloud->points[ind]);
+                cornerPointsLessSharp.push_back(laserCloud->points[ind]);
+                // RCLCPP_INFO("pick sharp at sort_id [%d], primary id[%d]", k, ind);
+                // if (ind == 211 || ind == 212 || ind == 213 || ind == 214) {
+                //   const auto &pt = laserCloud->points[ind];
+                //   printf("%d-[%f, %f, %f]\n", ind, pt.x, pt.y, pt.z);
+                // }
+              } else if (largestPickedNum <= 20) {
+                cloudLabel[ind] = 1;
+                cornerPointsLessSharp.push_back(laserCloud->points[ind]);
+              } else {
+                break;
+              }
+
+              cloudNeighborPicked[ind] = 1;
+
+              for (int l = 1; l <= kNumEdgeNeighbor; l++) {
+                float diffX = laserCloud->points[ind + l].x -
+                              laserCloud->points[ind + l - 1].x;
+                float diffY = laserCloud->points[ind + l].y -
+                              laserCloud->points[ind + l - 1].y;
+                float diffZ = laserCloud->points[ind + l].z -
+                              laserCloud->points[ind + l - 1].z;
+                if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.02) {
+                  break;
+                }
+
+                cloudNeighborPicked[ind + l] = 1;
+              }
+              for (int l = -1; l >= -kNumEdgeNeighbor; l--) {
+                float diffX = laserCloud->points[ind + l].x -
+                              laserCloud->points[ind + l + 1].x;
+                float diffY = laserCloud->points[ind + l].y -
+                              laserCloud->points[ind + l + 1].y;
+                float diffZ = laserCloud->points[ind + l].z -
+                              laserCloud->points[ind + l + 1].z;
+                if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.02) {
+                  break;
+                }
+
+                cloudNeighborPicked[ind + l] = 1;
+              }
+            }
+          }
+
+          int smallestPickedNum = 0;
+          for (int k = sp; k <= ep; k++) {
+            int ind = cloudSortInd[k];
+
+            if (cloudNeighborPicked[ind] != 0) continue;
+
+            if (cloudCurvature[ind] < kThresholdFlat) {
+              cloudLabel[ind] = -1;
+              surfPointsFlat.push_back(laserCloud->points[ind]);
+              cloudNeighborPicked[ind] = 1;
+
+              smallestPickedNum++;
+              if (smallestPickedNum >= kNumFlat) {
+                break;
+              }
+
+              for (int l = 1; l <= kNumFlatNeighbor; l++) {
+                float diffX = laserCloud->points[ind + l].x -
+                              laserCloud->points[ind + l - 1].x;
+                float diffY = laserCloud->points[ind + l].y -
+                              laserCloud->points[ind + l - 1].y;
+                float diffZ = laserCloud->points[ind + l].z -
+                              laserCloud->points[ind + l - 1].z;
+                if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.02) {
+                  break;
+                }
+
+                cloudNeighborPicked[ind + l] = 1;
+              }
+              for (int l = -1; l >= -kNumFlatNeighbor; l--) {
+                float diffX = laserCloud->points[ind + l].x -
+                              laserCloud->points[ind + l + 1].x;
+                float diffY = laserCloud->points[ind + l].y -
+                              laserCloud->points[ind + l + 1].y;
+                float diffZ = laserCloud->points[ind + l].z -
+                              laserCloud->points[ind + l + 1].z;
+                if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.02) {
+                  break;
+                }
+
+                cloudNeighborPicked[ind + l] = 1;
+              }
+            }
+          }
+
+          for (int k = sp; k <= ep; k++) {
+            if (cloudLabel[k] <= 0 && cloudCurvature[k] < kThresholdLessflat) {
+              surfPointsLessFlatScan->push_back(laserCloud->points[k]);
+            }
+          }
+        }
+
+        surfPointsLessFlat += surfPointsFlat;
+        cornerPointsLessSharp += cornerPointsSharp;
+        /// Whether downsample less-flat points
+        if (false) {
+          pcl::PointCloud<PointType> surfPointsLessFlatScanDS;
+          pcl::VoxelGrid<PointType> downSizeFilter;
+          downSizeFilter.setInputCloud(surfPointsLessFlatScan);
+          downSizeFilter.setLeafSize(0.2, 0.2, 0.2);
+          downSizeFilter.filter(surfPointsLessFlatScanDS);
+          surfPointsLessFlat += surfPointsLessFlatScanDS;
+        } else {
+          surfPointsLessFlat += *surfPointsLessFlatScan;
+        }
+      }
+      printf("sort q time %f \n", t_q_sort);
+      printf("seperate points time %f \n", t_pts.toc());
+
+      if (false) {
+        removeClosedPointCloud(*laserCloud, *laserCloud, MINIMUM_RANGE);
+        removeClosedPointCloud(cornerPointsLessSharp, cornerPointsLessSharp,
+                               MINIMUM_RANGE);
+        removeClosedPointCloud(cornerPointsSharp, cornerPointsSharp, MINIMUM_RANGE);
+        removeClosedPointCloud(surfPointsFlat, surfPointsFlat, MINIMUM_RANGE);
+        removeClosedPointCloud(surfPointsLessFlat, surfPointsLessFlat,
+                               MINIMUM_RANGE);
+      }
+
+      /// Visualize curvature
+      if (b_viz_curv) {
+        std_msgs::msg::Header ros_hdr = laserCloudMsg->header;
+        ros_hdr.frame_id = "aft_mapped";
+        VisualizeCurvature(cloudCurvature, cloudLabel, *laserCloud, ros_hdr);
+      }
+
+      sensor_msgs::msg::PointCloud2 laserCloudOutMsg;
+      pcl::toROSMsg(*laserCloud, laserCloudOutMsg);
+      laserCloudOutMsg.header.stamp = laserCloudMsg->header.stamp;
+      laserCloudOutMsg.header.frame_id = "aft_mapped";
+      pubLaserCloud->publish(laserCloudOutMsg);
+
+      sensor_msgs::msg::PointCloud2 cornerPointsSharpMsg;
+      pcl::toROSMsg(cornerPointsSharp, cornerPointsSharpMsg);
+      cornerPointsSharpMsg.header.stamp = laserCloudMsg->header.stamp;
+      cornerPointsSharpMsg.header.frame_id = "aft_mapped";
+      pubCornerPointsSharp->publish(cornerPointsSharpMsg);
+
+      sensor_msgs::msg::PointCloud2 cornerPointsLessSharpMsg;
+      pcl::toROSMsg(cornerPointsLessSharp, cornerPointsLessSharpMsg);
+      cornerPointsLessSharpMsg.header.stamp = laserCloudMsg->header.stamp;
+      cornerPointsLessSharpMsg.header.frame_id = "aft_mapped";
+      pubCornerPointsLessSharp->publish(cornerPointsLessSharpMsg);
+
+      sensor_msgs::msg::PointCloud2 surfPointsFlat2;
+      pcl::toROSMsg(surfPointsFlat, surfPointsFlat2);
+      surfPointsFlat2.header.stamp = laserCloudMsg->header.stamp;
+      surfPointsFlat2.header.frame_id = "aft_mapped";
+      pubSurfPointsFlat->publish(surfPointsFlat2);
+
+      sensor_msgs::msg::PointCloud2 surfPointsLessFlat2;
+      pcl::toROSMsg(surfPointsLessFlat, surfPointsLessFlat2);
+      surfPointsLessFlat2.header.stamp = laserCloudMsg->header.stamp;
+      surfPointsLessFlat2.header.frame_id = "aft_mapped";
+      pubSurfPointsLessFlat->publish(surfPointsLessFlat2);
+
+      // pub each scam
+      if (PUB_EACH_LINE) {
+        for (int i = 0; i < N_SCANS; i++) {
+          sensor_msgs::msg::PointCloud2 scanMsg;
+          pcl::toROSMsg(laserCloudScans[i], scanMsg);
+          scanMsg.header.stamp = rclcpp::Time(laserCloudMsg->header.stamp);
+          scanMsg.header.frame_id = "aft_mapped";
+          pubEachScan[i]->publish(scanMsg);
+        }
+      }
+
+      printf("scan registration time %f ms *************\n", t_whole.toc());
+      if (t_whole.toc() > 100) {
+        RCLCPP_WARN(rclcpp::get_logger("scanRegistration"), "scan registration process over 100ms");
       }
     }
 
-    surfPointsLessFlat += surfPointsFlat;
-    cornerPointsLessSharp += cornerPointsSharp;
-    /// Whether downsample less-flat points
-    if (false) {
-      pcl::PointCloud<PointType> surfPointsLessFlatScanDS;
-      pcl::VoxelGrid<PointType> downSizeFilter;
-      downSizeFilter.setInputCloud(surfPointsLessFlatScan);
-      downSizeFilter.setLeafSize(0.2, 0.2, 0.2);
-      downSizeFilter.filter(surfPointsLessFlatScanDS);
-      surfPointsLessFlat += surfPointsLessFlatScanDS;
-    } else {
-      surfPointsLessFlat += *surfPointsLessFlatScan;
-    }
-  }
-  printf("sort q time %f \n", t_q_sort);
-  printf("seperate points time %f \n", t_pts.toc());
+private:
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subLaserCloud;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloud;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubCornerPointsSharp;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubCornerPointsLessSharp;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubSurfPointsFlat;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubSurfPointsLessFlat;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubRemovePoints;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_curvature;
+    std::vector<rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr> pubEachScan;
 
-  if (false) {
-    removeClosedPointCloud(*laserCloud, *laserCloud, MINIMUM_RANGE);
-    removeClosedPointCloud(cornerPointsLessSharp, cornerPointsLessSharp,
-                           MINIMUM_RANGE);
-    removeClosedPointCloud(cornerPointsSharp, cornerPointsSharp, MINIMUM_RANGE);
-    removeClosedPointCloud(surfPointsFlat, surfPointsFlat, MINIMUM_RANGE);
-    removeClosedPointCloud(surfPointsLessFlat, surfPointsLessFlat,
-                           MINIMUM_RANGE);
-  }
-
-  /// Visualize curvature
-  if (b_viz_curv) {
-    std_msgs::msg::Header ros_hdr = laserCloudMsg->header;
-    ros_hdr.frame_id = "aft_mapped";
-    VisualizeCurvature(cloudCurvature, cloudLabel, *laserCloud, ros_hdr);
-  }
-
-  sensor_msgs::msg::PointCloud2 laserCloudOutMsg;
-  pcl::toROSMsg(*laserCloud, laserCloudOutMsg);
-  laserCloudOutMsg.header.stamp = laserCloudMsg->header.stamp;
-  laserCloudOutMsg.header.frame_id = "aft_mapped";
-  pubLaserCloud->publish(laserCloudOutMsg);
-
-  sensor_msgs::msg::PointCloud2 cornerPointsSharpMsg;
-  pcl::toROSMsg(cornerPointsSharp, cornerPointsSharpMsg);
-  cornerPointsSharpMsg.header.stamp = laserCloudMsg->header.stamp;
-  cornerPointsSharpMsg.header.frame_id = "aft_mapped";
-  pubCornerPointsSharp->publish(cornerPointsSharpMsg);
-
-  sensor_msgs::msg::PointCloud2 cornerPointsLessSharpMsg;
-  pcl::toROSMsg(cornerPointsLessSharp, cornerPointsLessSharpMsg);
-  cornerPointsLessSharpMsg.header.stamp = laserCloudMsg->header.stamp;
-  cornerPointsLessSharpMsg.header.frame_id = "aft_mapped";
-  pubCornerPointsLessSharp->publish(cornerPointsLessSharpMsg);
-
-  sensor_msgs::msg::PointCloud2 surfPointsFlat2;
-  pcl::toROSMsg(surfPointsFlat, surfPointsFlat2);
-  surfPointsFlat2.header.stamp = laserCloudMsg->header.stamp;
-  surfPointsFlat2.header.frame_id = "aft_mapped";
-  pubSurfPointsFlat->publish(surfPointsFlat2);
-
-  sensor_msgs::msg::PointCloud2 surfPointsLessFlat2;
-  pcl::toROSMsg(surfPointsLessFlat, surfPointsLessFlat2);
-  surfPointsLessFlat2.header.stamp = laserCloudMsg->header.stamp;
-  surfPointsLessFlat2.header.frame_id = "aft_mapped";
-  pubSurfPointsLessFlat->publish(surfPointsLessFlat2);
-
-  // pub each scam
-  if (PUB_EACH_LINE) {
-    for (int i = 0; i < N_SCANS; i++) {
-      sensor_msgs::msg::PointCloud2 scanMsg;
-      pcl::toROSMsg(laserCloudScans[i], scanMsg);
-      scanMsg.header.stamp = rclcpp::Time(laserCloudMsg->header.stamp);
-      scanMsg.header.frame_id = "aft_mapped";
-      pubEachScan[i]->publish(scanMsg);
-    }
-  }
-
-  printf("scan registration time %f ms *************\n", t_whole.toc());
-  if (t_whole.toc() > 100) {
-    RCLCPP_WARN(rclcpp::get_logger("scanRegistration"), "scan registration process over 100ms");
-  }
-}
+};
 
 int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
-  auto node = std::make_shared<rclcpp::Node>("scanRegistration");
-
-  N_SCANS = node->declare_parameter("scan_line", 6); // Horizon has 6 scan lines
-  THRESHOLD_FLAT = node->declare_parameter("threshold_flat", 0.01);
-  THRESHOLD_SHARP = node->declare_parameter("threshold_sharp", 0.01);
-
+  auto node = std::make_shared<scanRegistration>();
   printf("scan line number %d \n", N_SCANS);
-
   if (N_SCANS != 6) {
     printf("only support livox horizon lidar!");
     return 0;
   }
-
-  auto subLaserCloud = node->create_subscription<sensor_msgs::msg::PointCloud2::ConstSharedPtr>("/livox_undistort", 100,
-                                                                                                laserCloudHandler);
-  pubLaserCloud = node->create_publisher<sensor_msgs::msg::PointCloud2>("/velodyne_cloud_2", 100);
-  pubCornerPointsSharp = node->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_sharp", 100);
-  pubCornerPointsLessSharp = node->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_less_sharp", 100);
-  pubSurfPointsFlat = node->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_flat", 100);
-  pubSurfPointsLessFlat = node->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_less_flat", 100);
-  pubRemovePoints = node->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_remove_points", 100);
-  pub_curvature = node->create_publisher<visualization_msgs::msg::MarkerArray>("/curvature", 100);
-
-  if (PUB_EACH_LINE) {
-    for (int i = 0; i < N_SCANS; i++) {
-      rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr tmp = node->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_scanid_" + std::to_string(i), 100);
-      pubEachScan.push_back(tmp);
-    }
-  }
-  rclcpp::spin_some(node);
-
+  rclcpp::spin(node);
+  rclcpp::shutdown();
   return 0;
 }
