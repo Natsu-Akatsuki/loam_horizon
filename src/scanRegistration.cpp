@@ -33,18 +33,19 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-#include <nav_msgs/Odometry.h>
+#include <nav_msgs/msg/odometry.hpp>
 #include <opencv2/opencv.hpp>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+#include <rclcpp/rclcpp.hpp>
+#include "rcpputils/asserts.hpp"
 #include <pcl_conversions/pcl_conversions.h>
-#include <ros/ros.h>
-#include <sensor_msgs/Imu.h>
-#include <sensor_msgs/PointCloud2.h>
-#include <tf/transform_datatypes.h>
-#include <visualization_msgs/MarkerArray.h>
+#include <sensor_msgs/msg/imu.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
+
 #include <cmath>
 #include <string>
 #include <vector>
@@ -76,15 +77,14 @@ int cloudLabel[400000];
 
 bool comp(int i, int j) { return (cloudCurvature[i] < cloudCurvature[j]); }
 
-ros::Publisher pubLaserCloud;
-ros::Publisher pubCornerPointsSharp;
-ros::Publisher pubCornerPointsLessSharp;
-ros::Publisher pubSurfPointsFlat;
-ros::Publisher pubSurfPointsLessFlat;
-ros::Publisher pubRemovePoints;
-std::vector<ros::Publisher> pubEachScan;
-
-ros::Publisher pub_curvature;
+rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloud;
+rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubCornerPointsSharp;
+rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubCornerPointsLessSharp;
+rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubSurfPointsFlat;
+rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubSurfPointsLessFlat;
+rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubRemovePoints;
+rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_curvature;
+std::vector<rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr> pubEachScan;
 
 bool PUB_EACH_LINE = true;
 
@@ -92,7 +92,7 @@ double MINIMUM_RANGE = 0.1;
 double THRESHOLD_FLAT = 0.01;
 double THRESHOLD_SHARP = 0.01;
 
-template <typename PointT>
+template<typename PointT>
 void removeClosedPointCloud(const pcl::PointCloud<PointT> &cloud_in,
                             pcl::PointCloud<PointT> &cloud_out, float thres) {
   if (&cloud_in != &cloud_out) {
@@ -104,8 +104,8 @@ void removeClosedPointCloud(const pcl::PointCloud<PointT> &cloud_in,
 
   for (size_t i = 0; i < cloud_in.points.size(); ++i) {
     if (cloud_in.points[i].x * cloud_in.points[i].x +
-            cloud_in.points[i].y * cloud_in.points[i].y +
-            cloud_in.points[i].z * cloud_in.points[i].z <
+        cloud_in.points[i].y * cloud_in.points[i].y +
+        cloud_in.points[i].z * cloud_in.points[i].z <
         thres * thres)
       continue;
     cloud_out.points[j] = cloud_in.points[i];
@@ -120,19 +120,19 @@ void removeClosedPointCloud(const pcl::PointCloud<PointT> &cloud_in,
   cloud_out.is_dense = true;
 }
 
-template <typename PointT>
+template<typename PointT>
 void VisualizeCurvature(float *v_curv, int *v_label,
                         const pcl::PointCloud<PointT> &pcl_in,
-                        const std_msgs::Header &hdr) {
-  ROS_ASSERT(pcl_in.size() < 400000);
+                        const std_msgs::msg::Header &hdr) {
+    RCUTILS_ASSERT(pcl_in.size() < 400000);
 
   /// Same marker attributes
-  visualization_msgs::Marker txt_mk;
+  visualization_msgs::msg::Marker txt_mk;
   txt_mk.header = hdr;
-  txt_mk.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+  txt_mk.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
   txt_mk.ns = "default";
   txt_mk.id = 0;
-  txt_mk.action = visualization_msgs::Marker::ADD;
+  txt_mk.action = visualization_msgs::msg::Marker::ADD;
   txt_mk.pose.orientation.x = 0;
   txt_mk.pose.orientation.y = 0;
   txt_mk.pose.orientation.z = 0;
@@ -143,17 +143,17 @@ void VisualizeCurvature(float *v_curv, int *v_label,
   txt_mk.color.g = 1;
   txt_mk.color.b = 0;
 
-  static visualization_msgs::MarkerArray curv_txt_msg;
+  static visualization_msgs::msg::MarkerArray curv_txt_msg;
   // for (size_t i = 0; i < curv_txt_msg.markers.size(); ++i) {
   //   auto &mk_i = curv_txt_msg.markers[i];
   //   mk_i = txt_mk;
   //   mk_i.header.stamp = txt_mk.header.stamp - ros::Duration(0.001);
-  //   mk_i.action = visualization_msgs::Marker::DELETE;
+  //   mk_i.action = visualization_msgs::msg::Marker::DELETE;
   //   mk_i.text = "";
   //   mk_i.ns = "old";
   //   mk_i.color.a = 0;
   // }
-  // pub_curvature.publish(curv_txt_msg);
+  // pub_curvature->publish(curv_txt_msg);
   // ros::Rate r(200);
   // r.sleep();
 
@@ -299,16 +299,17 @@ void VisualizeCurvature(float *v_curv, int *v_label,
       }
     }
   }
-  ROS_INFO("edge/edgeless/flatless/flat/nn num: [%d / %d / %d / %d / %d] - %lu",
-           edge_num, edgeless_num, flatless_num, flat_num, nn, pt_num);
+  RCLCPP_INFO(rclcpp::get_logger("scanRegistration"),
+              "edge/edgeless/flatless/flat/nn num: [%d / %d / %d / %d / %d] - %lu",
+              edge_num, edgeless_num, flatless_num, flat_num, nn, pt_num);
 
   /// Delete old points
   if (pre_pt_num > pt_num) {
-    ROS_WARN("%lu > %lu", pre_pt_num, pt_num);
+    RCLCPP_WARN(rclcpp::get_logger("scanRegistration"), "%lu > %lu", pre_pt_num, pt_num);
     // curv_txt_msg.markers.resize(pre_pt_num);
     for (size_t i = pt_num; i < pre_pt_num; ++i) {
       auto &mk_i = curv_txt_msg.markers[i];
-      mk_i.action = visualization_msgs::Marker::DELETE;
+      mk_i.action = visualization_msgs::msg::Marker::DELETE;
       mk_i.color.a = 0;
       mk_i.color.r = 0;
       mk_i.color.g = 0;
@@ -319,10 +320,10 @@ void VisualizeCurvature(float *v_curv, int *v_label,
   }
   pre_pt_num = pt_num;
 
-  pub_curvature.publish(curv_txt_msg);
+  pub_curvature->publish(curv_txt_msg);
 }
 
-void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
+void laserCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &laserCloudMsg) {
   if (!systemInited) {
     systemInitCount++;
     if (systemInitCount >= systemDelay) {
@@ -355,7 +356,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
     point.curvature = laserCloudIn.points[i].curvature;
     int scanID = 0;
     if (N_SCANS == 6) {
-      scanID = (int)point.intensity;
+      scanID = (int) point.intensity;
     }
     laserCloudScans[scanID].push_back(point);
   }
@@ -368,7 +369,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
     scanStartInd[i] = laserCloud->size() + 5;
     *laserCloud += laserCloudScans[i];
     scanEndInd[i] = laserCloud->size() - 6;
-    // ROS_INFO("scan %d start-end [%d, %d]", i, scanStartInd[i],
+    // RCLCPP_INFO("scan %d start-end [%d, %d]", i, scanStartInd[i],
     // scanEndInd[i]);
   }
 
@@ -477,7 +478,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
   for (int i = 0; i < N_SCANS; i++) {
     if (scanEndInd[i] - scanStartInd[i] < kNumCurvSize) continue;
     pcl::PointCloud<PointType>::Ptr surfPointsLessFlatScan(
-        new pcl::PointCloud<PointType>);
+      new pcl::PointCloud<PointType>);
 
     /// debug
     if (b_only_1_scan && i > 0) {
@@ -486,10 +487,10 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
 
     for (int j = 0; j < kNumRegion; j++) {
       int sp =
-          scanStartInd[i] + (scanEndInd[i] - scanStartInd[i]) * j / kNumRegion;
+        scanStartInd[i] + (scanEndInd[i] - scanStartInd[i]) * j / kNumRegion;
       int ep = scanStartInd[i] +
                (scanEndInd[i] - scanStartInd[i]) * (j + 1) / kNumRegion - 1;
-      //      ROS_INFO("scan [%d], id from-to [%d-%d] in [%d-%d]", i, sp, ep,
+      //      RCLCPP_INFO("scan [%d], id from-to [%d-%d] in [%d-%d]", i, sp, ep,
       //               scanStartInd[i], scanEndInd[i]);
 
       TicToc t_tmp;
@@ -519,7 +520,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
 
       if (true) {
         for (int tt = sp; tt < ep - 1; ++tt) {
-          ROS_ASSERT(cloudCurvature[cloudSortInd[tt]] <=
+          rcpputils::assert_true(cloudCurvature[cloudSortInd[tt]] <=
                      cloudCurvature[cloudSortInd[tt + 1]]);
         }
       }
@@ -536,7 +537,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
             cloudLabel[ind] = 2;
             cornerPointsSharp.push_back(laserCloud->points[ind]);
             cornerPointsLessSharp.push_back(laserCloud->points[ind]);
-            // ROS_INFO("pick sharp at sort_id [%d], primary id[%d]", k, ind);
+            // RCLCPP_INFO("pick sharp at sort_id [%d], primary id[%d]", k, ind);
             // if (ind == 211 || ind == 212 || ind == 213 || ind == 214) {
             //   const auto &pt = laserCloud->points[ind];
             //   printf("%d-[%f, %f, %f]\n", ind, pt.x, pt.y, pt.z);
@@ -660,63 +661,65 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
 
   /// Visualize curvature
   if (b_viz_curv) {
-    std_msgs::Header ros_hdr = laserCloudMsg->header;
+    std_msgs::msg::Header ros_hdr = laserCloudMsg->header;
     ros_hdr.frame_id = "aft_mapped";
     VisualizeCurvature(cloudCurvature, cloudLabel, *laserCloud, ros_hdr);
   }
 
-  sensor_msgs::PointCloud2 laserCloudOutMsg;
+  sensor_msgs::msg::PointCloud2 laserCloudOutMsg;
   pcl::toROSMsg(*laserCloud, laserCloudOutMsg);
   laserCloudOutMsg.header.stamp = laserCloudMsg->header.stamp;
   laserCloudOutMsg.header.frame_id = "aft_mapped";
-  pubLaserCloud.publish(laserCloudOutMsg);
+  pubLaserCloud->publish(laserCloudOutMsg);
 
-  sensor_msgs::PointCloud2 cornerPointsSharpMsg;
+  sensor_msgs::msg::PointCloud2 cornerPointsSharpMsg;
   pcl::toROSMsg(cornerPointsSharp, cornerPointsSharpMsg);
   cornerPointsSharpMsg.header.stamp = laserCloudMsg->header.stamp;
   cornerPointsSharpMsg.header.frame_id = "aft_mapped";
-  pubCornerPointsSharp.publish(cornerPointsSharpMsg);
+  pubCornerPointsSharp->publish(cornerPointsSharpMsg);
 
-  sensor_msgs::PointCloud2 cornerPointsLessSharpMsg;
+  sensor_msgs::msg::PointCloud2 cornerPointsLessSharpMsg;
   pcl::toROSMsg(cornerPointsLessSharp, cornerPointsLessSharpMsg);
   cornerPointsLessSharpMsg.header.stamp = laserCloudMsg->header.stamp;
   cornerPointsLessSharpMsg.header.frame_id = "aft_mapped";
-  pubCornerPointsLessSharp.publish(cornerPointsLessSharpMsg);
+  pubCornerPointsLessSharp->publish(cornerPointsLessSharpMsg);
 
-  sensor_msgs::PointCloud2 surfPointsFlat2;
+  sensor_msgs::msg::PointCloud2 surfPointsFlat2;
   pcl::toROSMsg(surfPointsFlat, surfPointsFlat2);
   surfPointsFlat2.header.stamp = laserCloudMsg->header.stamp;
   surfPointsFlat2.header.frame_id = "aft_mapped";
-  pubSurfPointsFlat.publish(surfPointsFlat2);
+  pubSurfPointsFlat->publish(surfPointsFlat2);
 
-  sensor_msgs::PointCloud2 surfPointsLessFlat2;
+  sensor_msgs::msg::PointCloud2 surfPointsLessFlat2;
   pcl::toROSMsg(surfPointsLessFlat, surfPointsLessFlat2);
   surfPointsLessFlat2.header.stamp = laserCloudMsg->header.stamp;
   surfPointsLessFlat2.header.frame_id = "aft_mapped";
-  pubSurfPointsLessFlat.publish(surfPointsLessFlat2);
+  pubSurfPointsLessFlat->publish(surfPointsLessFlat2);
 
   // pub each scam
   if (PUB_EACH_LINE) {
     for (int i = 0; i < N_SCANS; i++) {
-      sensor_msgs::PointCloud2 scanMsg;
+      sensor_msgs::msg::PointCloud2 scanMsg;
       pcl::toROSMsg(laserCloudScans[i], scanMsg);
-      scanMsg.header.stamp = laserCloudMsg->header.stamp;
+      scanMsg.header.stamp = rclcpp::Time(laserCloudMsg->header.stamp);
       scanMsg.header.frame_id = "aft_mapped";
-      pubEachScan[i].publish(scanMsg);
+      pubEachScan[i]->publish(scanMsg);
     }
   }
 
   printf("scan registration time %f ms *************\n", t_whole.toc());
-  if (t_whole.toc() > 100) ROS_WARN("scan registration process over 100ms");
+  if (t_whole.toc() > 100) {
+    RCLCPP_WARN(rclcpp::get_logger("scanRegistration"), "scan registration process over 100ms");
+  }
 }
 
 int main(int argc, char **argv) {
-  ros::init(argc, argv, "scanRegistration");
-  ros::NodeHandle nh;
+  rclcpp::init(argc, argv);
+  auto node = std::make_shared<rclcpp::Node>("scanRegistration");
 
-  nh.param<int>("scan_line", N_SCANS, 6); // Horizon has 6 scan lines
-  nh.param<double>("threshold_flat", THRESHOLD_FLAT, 0.01);
-  nh.param<double>("threshold_sharp", THRESHOLD_SHARP, 0.01);
+  N_SCANS = node->declare_parameter("scan_line", 6); // Horizon has 6 scan lines
+  THRESHOLD_FLAT = node->declare_parameter("threshold_flat", 0.01);
+  THRESHOLD_SHARP = node->declare_parameter("threshold_sharp", 0.01);
 
   printf("scan line number %d \n", N_SCANS);
 
@@ -725,38 +728,23 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>(
-      "/livox_undistort", 100, laserCloudHandler);
-
-  pubLaserCloud =
-      nh.advertise<sensor_msgs::PointCloud2>("/velodyne_cloud_2", 100);
-
-  pubCornerPointsSharp =
-      nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_sharp", 100);
-
-  pubCornerPointsLessSharp =
-      nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_less_sharp", 100);
-
-  pubSurfPointsFlat =
-      nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_flat", 100);
-
-  pubSurfPointsLessFlat =
-      nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_less_flat", 100);
-
-  pubRemovePoints =
-      nh.advertise<sensor_msgs::PointCloud2>("/laser_remove_points", 100);
-
-  pub_curvature =
-      nh.advertise<visualization_msgs::MarkerArray>("/curvature", 100);
+  auto subLaserCloud = node->create_subscription<sensor_msgs::msg::PointCloud2::ConstSharedPtr>("/livox_undistort", 100,
+                                                                                                laserCloudHandler);
+  pubLaserCloud = node->create_publisher<sensor_msgs::msg::PointCloud2>("/velodyne_cloud_2", 100);
+  pubCornerPointsSharp = node->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_sharp", 100);
+  pubCornerPointsLessSharp = node->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_less_sharp", 100);
+  pubSurfPointsFlat = node->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_flat", 100);
+  pubSurfPointsLessFlat = node->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_less_flat", 100);
+  pubRemovePoints = node->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_remove_points", 100);
+  pub_curvature = node->create_publisher<visualization_msgs::msg::MarkerArray>("/curvature", 100);
 
   if (PUB_EACH_LINE) {
     for (int i = 0; i < N_SCANS; i++) {
-      ros::Publisher tmp = nh.advertise<sensor_msgs::PointCloud2>(
-          "/laser_scanid_" + std::to_string(i), 100);
+      rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr tmp = node->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_scanid_" + std::to_string(i), 100);
       pubEachScan.push_back(tmp);
     }
   }
-  ros::spin();
+  rclcpp::spin_some(node);
 
   return 0;
 }
