@@ -40,3 +40,9 @@ target_link_libraries(imu_process ${PCL_LIBRARIES} ${OpenCV_LIBS})
 
 # replace the export, install and ament_package command
 ament_auto_package()
+
+install(DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME})
+
+install(DIRECTORY rviz_cfg
+  DESTINATION share/${PROJECT_NAME})
