@@ -319,9 +319,9 @@ public:
           }
         }
       }
-      RCLCPP_INFO(rclcpp::get_logger("scanRegistration"),
-                  "edge/edgeless/flatless/flat/nn num: [%d / %d / %d / %d / %d] - %lu",
-                  edge_num, edgeless_num, flatless_num, flat_num, nn, pt_num);
+      // RCLCPP_INFO(rclcpp::get_logger("scanRegistration"),
+      //             "edge/edgeless/flatless/flat/nn num: [%d / %d / %d / %d / %d] - %lu",
+      //             edge_num, edgeless_num, flatless_num, flat_num, nn, pt_num);
 
       /// Delete old points
       if (pre_pt_num > pt_num) {
@@ -382,7 +382,7 @@ public:
       }
 
       cloudSize = count;
-      printf("points size %d \n", cloudSize);
+      // printf("points size %d \n", cloudSize);
 
       pcl::PointCloud<PointType>::Ptr laserCloud(new pcl::PointCloud<PointType>());
       for (int i = 0; i < N_SCANS; i++) {
@@ -393,7 +393,7 @@ public:
         // scanEndInd[i]);
       }
 
-      printf("prepare time %f \n", t_prepare.toc());
+      // printf("prepare time %f \n", t_prepare.toc());
 
       int kNumCurvSize = 5;
       constexpr int kNumRegion = 50;       // 6
@@ -666,8 +666,8 @@ public:
           surfPointsLessFlat += *surfPointsLessFlatScan;
         }
       }
-      printf("sort q time %f \n", t_q_sort);
-      printf("seperate points time %f \n", t_pts.toc());
+      // printf("sort q time %f \n", t_q_sort);
+      // printf("seperate points time %f \n", t_pts.toc());
 
       if (false) {
         removeClosedPointCloud(*laserCloud, *laserCloud, MINIMUM_RANGE);
@@ -727,7 +727,7 @@ public:
         }
       }
 
-      printf("scan registration time %f ms *************\n", t_whole.toc());
+      // printf("scan registration time %f ms *************\n", t_whole.toc());
       if (t_whole.toc() > 100) {
         RCLCPP_WARN(rclcpp::get_logger("scanRegistration"), "scan registration process over 100ms");
       }

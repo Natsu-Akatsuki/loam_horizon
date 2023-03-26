@@ -64,11 +64,11 @@ constexpr double NEARBY_SCAN = 2.5;
 int skipFrameNum = 5;
 bool systemInited = false;
 
-double timeCornerPointsSharp = 0;
-double timeCornerPointsLessSharp = 0;
-double timeSurfPointsFlat = 0;
-double timeSurfPointsLessFlat = 0;
-double timeLaserCloudFullRes = 0;
+uint64_t timeCornerPointsSharp = 0;
+uint64_t timeCornerPointsLessSharp = 0;
+uint64_t timeSurfPointsFlat = 0;
+uint64_t timeSurfPointsLessFlat = 0;
+uint64_t timeLaserCloudFullRes = 0;
 
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeCornerLast(
   new pcl::KdTreeFLANN<PointType>());
@@ -225,12 +225,12 @@ int main(int argc, char **argv) {
     if (!cornerSharpBuf.empty() && !cornerLessSharpBuf.empty() &&
         !surfFlatBuf.empty() && !surfLessFlatBuf.empty() &&
         !fullPointsBuf.empty()) {
-      timeCornerPointsSharp = rclcpp::Time(cornerSharpBuf.front()->header.stamp).seconds();
+      timeCornerPointsSharp = rclcpp::Time(cornerSharpBuf.front()->header.stamp).nanoseconds();
       timeCornerPointsLessSharp = rclcpp::Time(
-        cornerLessSharpBuf.front()->header.stamp).seconds();
-      timeSurfPointsFlat = rclcpp::Time(surfFlatBuf.front()->header.stamp).seconds();
-      timeSurfPointsLessFlat = rclcpp::Time(surfLessFlatBuf.front()->header.stamp).seconds();
-      timeLaserCloudFullRes = rclcpp::Time(fullPointsBuf.front()->header.stamp).seconds();
+        cornerLessSharpBuf.front()->header.stamp).nanoseconds();
+      timeSurfPointsFlat = rclcpp::Time(surfFlatBuf.front()->header.stamp).nanoseconds();
+      timeSurfPointsLessFlat = rclcpp::Time(surfLessFlatBuf.front()->header.stamp).nanoseconds();
+      timeLaserCloudFullRes = rclcpp::Time(fullPointsBuf.front()->header.stamp).nanoseconds();
 
       if (timeCornerPointsSharp != timeLaserCloudFullRes ||
           timeCornerPointsLessSharp != timeLaserCloudFullRes ||
@@ -420,7 +420,7 @@ int main(int argc, char **argv) {
           }
           // printf("coner_correspondance %d, plane_correspondence %d \n",
           // corner_correspondence, plane_correspondence);
-          printf("data association time %f ms \n", t_data.toc());
+          // printf("data association time %f ms \n", t_data.toc());
 
           if ((corner_correspondence + plane_correspondence) < 10) {
             printf(
@@ -435,13 +435,13 @@ int main(int argc, char **argv) {
           options.minimizer_progress_to_stdout = false;
           ceres::Solver::Summary summary;
           ceres::Solve(options, &problem, &summary);
-          printf("solver time %f ms \n", t_solver.toc());
+          // printf("solver time %f ms \n", t_solver.toc());
         }
-        printf("optimization twice time %f \n", t_opt.toc());
+        // printf("optimization twice time %f \n", t_opt.toc());
 
         t_w_curr = t_w_curr + q_w_curr * t_last_curr;
         q_w_curr = q_w_curr * q_last_curr;
-        std::cout << "t_w_curr: " << t_w_curr.transpose() << std::endl;
+        // std::cout << "t_w_curr: " << t_w_curr.transpose() << std::endl;
       }
 
       TicToc t_pub;
@@ -450,7 +450,7 @@ int main(int argc, char **argv) {
       nav_msgs::msg::Odometry laserOdometry;
       laserOdometry.header.frame_id = "camera_init";
       laserOdometry.child_frame_id = "laser_odom";
-      laserOdometry.header.stamp = rclcpp::Time(static_cast<uint64_t>(timeSurfPointsLessFlat * 1e9));
+      laserOdometry.header.stamp = rclcpp::Time(static_cast<int64_t>(timeSurfPointsLessFlat));
       laserOdometry.pose.pose.orientation.x = q_w_curr.x();
       laserOdometry.pose.pose.orientation.y = q_w_curr.y();
       laserOdometry.pose.pose.orientation.z = q_w_curr.z();
@@ -511,24 +511,24 @@ int main(int argc, char **argv) {
 
         sensor_msgs::msg::PointCloud2 laserCloudCornerLast2;
         pcl::toROSMsg(*cornerPointsSharp, laserCloudCornerLast2);
-        laserCloudCornerLast2.header.stamp = rclcpp::Time(static_cast<uint64_t>(timeSurfPointsLessFlat * 1e9));
+        laserCloudCornerLast2.header.stamp = rclcpp::Time(timeSurfPointsLessFlat);
         laserCloudCornerLast2.header.frame_id = "aft_mapped";
         pubLaserCloudCornerLast->publish(laserCloudCornerLast2);
 
         sensor_msgs::msg::PointCloud2 laserCloudSurfLast2;
         pcl::toROSMsg(*surfPointsFlat, laserCloudSurfLast2);
-        laserCloudSurfLast2.header.stamp = rclcpp::Time(static_cast<uint64_t>(timeSurfPointsLessFlat * 1e9));
+        laserCloudSurfLast2.header.stamp = rclcpp::Time(timeSurfPointsLessFlat);
         laserCloudSurfLast2.header.frame_id = "aft_mapped";
         pubLaserCloudSurfLast->publish(laserCloudSurfLast2);
 
         sensor_msgs::msg::PointCloud2 laserCloudFullRes3;
         pcl::toROSMsg(*laserCloudFullRes, laserCloudFullRes3);
-        laserCloudFullRes3.header.stamp = rclcpp::Time(static_cast<uint64_t>(timeSurfPointsLessFlat * 1e9));
+        laserCloudFullRes3.header.stamp = rclcpp::Time(timeSurfPointsLessFlat);
         laserCloudFullRes3.header.frame_id = "aft_mapped";
         pubLaserCloudFullRes->publish(laserCloudFullRes3);
       }
-      printf("publication time %f ms \n", t_pub.toc());
-      printf("whole laserOdometry time %f ms \n \n", t_whole.toc());
+      // printf("publication time %f ms \n", t_pub.toc());
+      // printf("whole laserOdometry time %f ms \n \n", t_whole.toc());
       if (t_whole.toc() > 100) {
         RCLCPP_WARN(rclcpp::get_logger("laserOdometry"), "odometry process over 100ms");
       }

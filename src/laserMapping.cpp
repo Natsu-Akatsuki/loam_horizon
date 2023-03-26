@@ -45,7 +45,6 @@
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <eigen3/Eigen/Dense>
 #include <iostream>
@@ -59,16 +58,15 @@
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "lidarFactor.hpp"
-#include "loam_horizon/common.h"
 #include "loam_horizon/tic_toc.h"
 
 
 int frameCount = 0;
 
-double timeLaserCloudCornerLast = 0;
-double timeLaserCloudSurfLast = 0;
-double timeLaserCloudFullRes = 0;
-double timeLaserOdometry = 0;
+uint64_t timeLaserCloudCornerLast = 0;
+uint64_t timeLaserCloudSurfLast = 0;
+uint64_t timeLaserCloudFullRes = 0;
+uint64_t timeLaserOdometry = 0;
 
 int laserCloudCenWidth = 10;
 int laserCloudCenHeight = 10;
@@ -130,7 +128,7 @@ Eigen::Vector3d t_wodom_curr(0, 0, 0);
 std::queue<sensor_msgs::msg::PointCloud2::ConstSharedPtr> cornerLastBuf;
 std::queue<sensor_msgs::msg::PointCloud2::ConstSharedPtr> surfLastBuf;
 std::queue<sensor_msgs::msg::PointCloud2::ConstSharedPtr> fullResBuf;
-std::queue<nav_msgs::msg::Odometry::ConstPtr> odometryBuf;
+std::queue<nav_msgs::msg::Odometry::ConstSharedPtr> odometryBuf;
 std::mutex mBuf;
 
 pcl::VoxelGrid<PointType> downSizeFilterCorner;
@@ -229,7 +227,7 @@ void laserCloudFullResHandler(
 }
 
 // receive odomtry
-void laserOdometryHandler(const nav_msgs::msg::Odometry::ConstPtr &laserOdometry) {
+void laserOdometryHandler(const nav_msgs::msg::Odometry::ConstSharedPtr &laserOdometry) {
   mBuf.lock();
   odometryBuf.push(laserOdometry);
   mBuf.unlock();
@@ -268,8 +266,8 @@ void process(rclcpp::Node::SharedPtr node) {
            !fullResBuf.empty() && !odometryBuf.empty()) {
       mBuf.lock();
       while (!odometryBuf.empty() &&
-             rclcpp::Time(odometryBuf.front()->header.stamp).seconds() <
-             rclcpp::Time(cornerLastBuf.front()->header.stamp).seconds())
+             rclcpp::Time(odometryBuf.front()->header.stamp).nanoseconds() <
+             rclcpp::Time(cornerLastBuf.front()->header.stamp).nanoseconds())
         odometryBuf.pop();
       if (odometryBuf.empty()) {
         mBuf.unlock();
@@ -277,8 +275,8 @@ void process(rclcpp::Node::SharedPtr node) {
       }
 
       while (!surfLastBuf.empty() &&
-             rclcpp::Time(surfLastBuf.front()->header.stamp).seconds() <
-             rclcpp::Time(cornerLastBuf.front()->header.stamp).seconds())
+             rclcpp::Time(surfLastBuf.front()->header.stamp).nanoseconds() <
+             rclcpp::Time(cornerLastBuf.front()->header.stamp).nanoseconds())
         surfLastBuf.pop();
       if (surfLastBuf.empty()) {
         mBuf.unlock();
@@ -286,18 +284,18 @@ void process(rclcpp::Node::SharedPtr node) {
       }
 
       while (!fullResBuf.empty() &&
-             rclcpp::Time(fullResBuf.front()->header.stamp).seconds() <
-             rclcpp::Time(cornerLastBuf.front()->header.stamp).seconds())
+             rclcpp::Time(fullResBuf.front()->header.stamp).nanoseconds() <
+             rclcpp::Time(cornerLastBuf.front()->header.stamp).nanoseconds())
         fullResBuf.pop();
       if (fullResBuf.empty()) {
         mBuf.unlock();
         break;
       }
 
-      timeLaserCloudCornerLast = rclcpp::Time(cornerLastBuf.front()->header.stamp).seconds();
-      timeLaserCloudSurfLast = rclcpp::Time(surfLastBuf.front()->header.stamp).seconds();
-      timeLaserCloudFullRes = rclcpp::Time(fullResBuf.front()->header.stamp).seconds();
-      timeLaserOdometry = rclcpp::Time(odometryBuf.front()->header.stamp).seconds();
+      timeLaserCloudCornerLast = rclcpp::Time(cornerLastBuf.front()->header.stamp).nanoseconds();
+      timeLaserCloudSurfLast = rclcpp::Time(surfLastBuf.front()->header.stamp).nanoseconds();
+      timeLaserCloudFullRes = rclcpp::Time(fullResBuf.front()->header.stamp).nanoseconds();
+      timeLaserOdometry = rclcpp::Time(odometryBuf.front()->header.stamp).nanoseconds();
 
       if (timeLaserCloudCornerLast != timeLaserOdometry ||
           timeLaserCloudSurfLast != timeLaserOdometry ||
@@ -609,15 +607,15 @@ void process(rclcpp::Node::SharedPtr node) {
       downSizeFilterSurf.filter(*laserCloudSurfStack);
       int laserCloudSurfStackNum = laserCloudSurfStack->points.size();
 
-      printf("map prepare time %f ms\n", t_shift.toc());
-      printf("map corner num %d  surf num %d \n", laserCloudCornerFromMapNum,
-             laserCloudSurfFromMapNum);
+      // printf("map prepare time %f ms\n", t_shift.toc());
+      // printf("map corner num %d  surf num %d \n", laserCloudCornerFromMapNum,
+      //        laserCloudSurfFromMapNum);
       if (laserCloudCornerFromMapNum > 10 && laserCloudSurfFromMapNum > 50) {
         TicToc t_opt;
         TicToc t_tree;
         kdtreeCornerFromMap->setInputCloud(laserCloudCornerFromMap);
         kdtreeSurfFromMap->setInputCloud(laserCloudSurfFromMap);
-        printf("build tree time %f ms \n", t_tree.toc());
+        // printf("build tree time %f ms \n", t_tree.toc());
 
         for (int iterCount = 0; iterCount < 2; iterCount++) {
           // ceres::LossFunction *loss_function = NULL;
@@ -785,7 +783,7 @@ void process(rclcpp::Node::SharedPtr node) {
           // printf("surf num %d used surf num %d \n", laserCloudSurfStackNum,
           // surf_num);
 
-          printf("mapping data assosiation time %f ms \n", t_data.toc());
+          // printf("mapping data assosiation time %f ms \n", t_data.toc());
 
           TicToc t_solver;
           ceres::Solver::Options options;
@@ -796,8 +794,8 @@ void process(rclcpp::Node::SharedPtr node) {
           options.gradient_check_relative_precision = 1e-4;
           ceres::Solver::Summary summary;
           ceres::Solve(options, &problem, &summary);
-          printf("mapping solver time %f ms \n", t_solver.toc());
-          std::cout << summary.BriefReport() << std::endl;
+          // printf("mapping solver time %f ms \n", t_solver.toc());
+          // std::cout << summary.BriefReport() << std::endl;
           // printf("time %f \n", timeLaserOdometry);
           // printf("corner factor num %d surf factor num %d\n", corner_num,
           // surf_num);
@@ -805,7 +803,7 @@ void process(rclcpp::Node::SharedPtr node) {
           // parameters[0], parameters[1], parameters[2],
           //	   parameters[4], parameters[5], parameters[6]);
         }
-        printf("mapping optimization time %f \n", t_opt.toc());
+        // printf("mapping optimization time %f \n", t_opt.toc());
       } else {
         RCLCPP_WARN(rclcpp::get_logger("laserMapping"), "time Map corner and surf num are not enough");
       }
@@ -849,7 +847,7 @@ void process(rclcpp::Node::SharedPtr node) {
           laserCloudSurfArray[cubeInd]->push_back(pointSel);
         }
       }
-      printf("add points time %f ms\n", t_add.toc());
+      // printf("add points time %f ms\n", t_add.toc());
 
       TicToc t_filter;
       for (int i = 0; i < laserCloudValidNum; i++) {
@@ -867,7 +865,7 @@ void process(rclcpp::Node::SharedPtr node) {
         downSizeFilterSurf.filter(*tmpSurf);
         laserCloudSurfArray[ind] = tmpSurf;
       }
-      printf("filter time %f ms \n", t_filter.toc());
+      // printf("filter time %f ms \n", t_filter.toc());
 
       TicToc t_pub;
       // publish surround map for every 5 frame
@@ -914,9 +912,9 @@ void process(rclcpp::Node::SharedPtr node) {
       laserCloudFullRes3.header.frame_id = "camera_init";
       pubLaserCloudFullRes->publish(laserCloudFullRes3);
 
-      printf("mapping pub time %f ms \n", t_pub.toc());
+      // printf("mapping pub time %f ms \n", t_pub.toc());
 
-      printf("whole mapping time %f ms +++++\n", t_whole.toc());
+      // printf("whole mapping time %f ms +++++\n", t_whole.toc());
 
       nav_msgs::msg::Odometry odomAftMapped;
       odomAftMapped.header.frame_id = "camera_init";
@@ -977,20 +975,20 @@ int main(int argc, char **argv) {
   downSizeFilterSurf.setLeafSize(planeRes, planeRes, planeRes);
 
   auto subLaserCloudCornerLast = node->create_subscription<sensor_msgs::msg::PointCloud2>("/laser_cloud_corner_last",
-                                                                                          100,
+                                                                                          1000,
                                                                                           laserCloudCornerLastHandler);
-  auto subLaserCloudSurfLast = node->create_subscription<sensor_msgs::msg::PointCloud2>("/laser_cloud_surf_last", 100,
+  auto subLaserCloudSurfLast = node->create_subscription<sensor_msgs::msg::PointCloud2>("/laser_cloud_surf_last", 1000,
                                                                                         laserCloudSurfLastHandler);
   auto subLaserOdometry = node->create_subscription<nav_msgs::msg::Odometry>(
-    "/laser_odom_to_init", 100, laserOdometryHandler);
+    "/laser_odom_to_init", 1000, laserOdometryHandler);
   auto subLaserCloudFullRes = node->create_subscription<sensor_msgs::msg::PointCloud2>(
-    "/velodyne_cloud_3", 100, laserCloudFullResHandler);
-  pubLaserCloudSurround = node->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_surround", 100);
-  pubLaserCloudMap = node->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_map", 100);
-  pubLaserCloudFullRes = node->create_publisher<sensor_msgs::msg::PointCloud2>("/velodyne_cloud_registered", 100);
-  pubOdomAftMapped = node->create_publisher<nav_msgs::msg::Odometry>("/aft_mapped_to_init", 100);
-  pubOdomAftMappedHighFrec = node->create_publisher<nav_msgs::msg::Odometry>("/aft_mapped_to_init_high_frec", 100);
-  pubLaserAfterMappedPath = node->create_publisher<nav_msgs::msg::Path>("/aft_mapped_path", 100);
+    "/velodyne_cloud_3", 1000, laserCloudFullResHandler);
+  pubLaserCloudSurround = node->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_surround", 1000);
+  pubLaserCloudMap = node->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_map", 1000);
+  pubLaserCloudFullRes = node->create_publisher<sensor_msgs::msg::PointCloud2>("/velodyne_cloud_registered", 1000);
+  pubOdomAftMapped = node->create_publisher<nav_msgs::msg::Odometry>("/aft_mapped_to_init", 1000);
+  pubOdomAftMappedHighFrec = node->create_publisher<nav_msgs::msg::Odometry>("/aft_mapped_to_init_high_frec", 1000);
+  pubLaserAfterMappedPath = node->create_publisher<nav_msgs::msg::Path>("/aft_mapped_path", 1000);
 
   for (int i = 0; i < laserCloudNum; i++) {
     laserCloudCornerArray[i].reset(new pcl::PointCloud<PointType>());
