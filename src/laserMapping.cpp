@@ -247,7 +247,7 @@ void laserOdometryHandler(const nav_msgs::msg::Odometry::ConstSharedPtr &laserOd
   Eigen::Vector3d t_w_curr = q_wmap_wodom * t_wodom_curr + t_wmap_wodom;
 
   nav_msgs::msg::Odometry odomAftMapped;
-  odomAftMapped.header.frame_id = "camera_init";
+  odomAftMapped.header.frame_id = "livox_frame";
   odomAftMapped.child_frame_id = "aft_mapped";
   odomAftMapped.header.stamp = laserOdometry->header.stamp;
   odomAftMapped.pose.pose.orientation.x = q_w_curr.x();
@@ -881,7 +881,7 @@ void process(rclcpp::Node::SharedPtr node) {
         pcl::toROSMsg(*laserCloudSurround, laserCloudSurround3);
         laserCloudSurround3.header.stamp =
           rclcpp::Time(static_cast<uint64_t>(timeLaserOdometry * 1e9));
-        laserCloudSurround3.header.frame_id = "camera_init";
+        laserCloudSurround3.header.frame_id = "livox_frame";
         pubLaserCloudSurround->publish(laserCloudSurround3);
       }
 
@@ -894,7 +894,7 @@ void process(rclcpp::Node::SharedPtr node) {
         sensor_msgs::msg::PointCloud2 laserCloudMsg;
         pcl::toROSMsg(laserCloudMap, laserCloudMsg);
         laserCloudMsg.header.stamp = rclcpp::Time(static_cast<uint64_t>(timeLaserOdometry * 1e9));
-        laserCloudMsg.header.frame_id = "camera_init";
+        laserCloudMsg.header.frame_id = "livox_frame";
         pubLaserCloudMap->publish(laserCloudMsg);
       }
 
@@ -909,7 +909,7 @@ void process(rclcpp::Node::SharedPtr node) {
       sensor_msgs::msg::PointCloud2 laserCloudFullRes3;
       pcl::toROSMsg(*laserCloudFullResColor, laserCloudFullRes3);
       laserCloudFullRes3.header.stamp = rclcpp::Time(static_cast<uint64_t>(timeLaserOdometry * 1e9));
-      laserCloudFullRes3.header.frame_id = "camera_init";
+      laserCloudFullRes3.header.frame_id = "livox_frame";
       pubLaserCloudFullRes->publish(laserCloudFullRes3);
 
       // printf("mapping pub time %f ms \n", t_pub.toc());
@@ -917,7 +917,7 @@ void process(rclcpp::Node::SharedPtr node) {
       // printf("whole mapping time %f ms +++++\n", t_whole.toc());
 
       nav_msgs::msg::Odometry odomAftMapped;
-      odomAftMapped.header.frame_id = "camera_init";
+      odomAftMapped.header.frame_id = "livox_frame";
       odomAftMapped.child_frame_id = "aft_mapped";
       odomAftMapped.header.stamp = rclcpp::Time(static_cast<uint64_t>(timeLaserOdometry * 1e9));
       odomAftMapped.pose.pose.orientation.x = q_w_curr.x();
@@ -933,7 +933,7 @@ void process(rclcpp::Node::SharedPtr node) {
       laserAfterMappedPose.header = odomAftMapped.header;
       laserAfterMappedPose.pose = odomAftMapped.pose.pose;
       laserAfterMappedPath.header.stamp = odomAftMapped.header.stamp;
-      laserAfterMappedPath.header.frame_id = "camera_init";
+      laserAfterMappedPath.header.frame_id = "livox_frame";
       laserAfterMappedPath.poses.push_back(laserAfterMappedPose);
       pubLaserAfterMappedPath->publish(laserAfterMappedPath);
 
@@ -941,7 +941,7 @@ void process(rclcpp::Node::SharedPtr node) {
       geometry_msgs::msg::TransformStamped transformStamped;
       tf2::Quaternion q;
       transformStamped.header.stamp = odomAftMapped.header.stamp;
-      transformStamped.header.frame_id = "camera_init";
+      transformStamped.header.frame_id = "livox_frame";
       transformStamped.child_frame_id = "aft_mapped";
       transformStamped.transform.translation.x = t_w_curr(0);
       transformStamped.transform.translation.y = t_w_curr(1);
