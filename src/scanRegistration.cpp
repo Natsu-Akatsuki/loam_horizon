@@ -117,7 +117,7 @@ class scanRegistration : public rclcpp::Node {
 public:
     scanRegistration() : Node("scanRegistration") {
       subLaserCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-        "/livox_undistort", 10, std::bind(&scanRegistration::laserCloudHandler, this, std::placeholders::_1));
+        "/livox_undistort", 100, std::bind(&scanRegistration::laserCloudHandler, this, std::placeholders::_1));
       pubLaserCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>("/velodyne_cloud_2", 100);
       pubCornerPointsSharp = this->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_sharp", 100);
       pubCornerPointsLessSharp = this->create_publisher<sensor_msgs::msg::PointCloud2>("/laser_cloud_less_sharp", 100);

@@ -67,13 +67,13 @@ public:
 
       sensor_msgs::msg::PointCloud2 pcl_ros_msg;
       pcl::toROSMsg(pcl_in, pcl_ros_msg);
-      pcl_ros_msg.header.stamp = timestamp;
+      pcl_ros_msg.header.stamp = this->now();
       pcl_ros_msg.header.frame_id = "livox_frame";
       pub_pcl_out1->publish(pcl_ros_msg);
 
       sensor_msgs::msg::PointCloud2 pcl_ros_msg1;
       pcl::toROSMsg(pcl_in1, pcl_ros_msg1);
-      pcl_ros_msg1.header.stamp = timestamp;
+      pcl_ros_msg1.header.stamp = this->now();
       pcl_ros_msg1.header.frame_id = "livox_frame";
       pub_pcl_out0->publish(pcl_ros_msg1);
 

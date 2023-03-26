@@ -21,6 +21,10 @@
 
   <node pkg="loam_horizon" exec="livox_repub" name="livox_repub" output="screen"/>
 
+<!--  <node pkg="tf2_ros" exec="static_transform_publisher" name="map_to_camera_init" args="0 0 0 1.570795 0 1.570795 /map /camera_init" />-->
+<!--	<node pkg="tf2_ros" exec="static_transform_publisher" name="camera_to_livox" args="0 0 0 -1.570795 -1.570795 0 aft_mapped livox_frame" />-->
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="camera_to_livox" args="0 0 0 0 0 0 aft_mapped livox_frame" />
+
   <arg name="rviz" default="true"/>
   <group if="$(var rviz)">
     <node pkg="rviz2" exec="rviz2" name="rviz" args="-d $(find-pkg-share loam_horizon)/rviz_cfg/loam_horizon.rviz"/>

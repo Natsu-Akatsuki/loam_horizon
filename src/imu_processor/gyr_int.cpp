@@ -47,7 +47,7 @@ void GyrInt::Integrate(const sensor_msgs::msg::Imu::ConstPtr &imu) {
     const auto &gyr2 = imu->angular_velocity;
     const auto &acc2 = imu->linear_acceleration;
 
-    imu_inter->header.stamp = rclcpp::Time(static_cast<uint64_t>(start_timestamp_ * 1e9));
+    imu_inter->header.stamp = rclcpp::Time(static_cast<int64_t>(start_timestamp_ * 1e9));
     imu_inter->angular_velocity.x = w1 * gyr1.x + w2 * gyr2.x;
     imu_inter->angular_velocity.y = w1 * gyr1.y + w2 * gyr2.y;
     imu_inter->angular_velocity.z = w1 * gyr1.z + w2 * gyr2.z;
